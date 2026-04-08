@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import cv2
-from sklearn.cluster import DBSCAN, KMeans
+from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 
 from segment_anything import sam_model_registry, SamPredictor
@@ -25,6 +25,8 @@ SAM_MODEL_TYPE = 'vit_l'
 SAM_MODEL_PATH = './sam_checkpoints/sam_vit_l_0b3195.pth'
 
 OUTPUT_DIR = "./detection_out"
+
+CIRCULARITY_THRESHOLD = 0.75
 
 # load the data into a dictionary
 def load_data(image_dir, depth_dir):
@@ -68,41 +70,28 @@ def load_data(image_dir, depth_dir):
         image_depth_pairs.append((image, depth, name))
 
     return image_depth_pairs
- 
 
-# use Kmeans to separate the background from the foreground (needs some work)
-def get_foreground_mask(depth_map):
-    depth_vals = depth_map.ravel().reshape(-1, 1)
+def get_foreground_mask_thresh(image):
 
-    kmeans = KMeans(n_clusters=2).fit(depth_vals)
-    labels = kmeans.labels_
+    image = image.astype(np.float32)
 
-    # the cluster with the smaller mean depth (closer to camera) is the leaves/foreground
+    r = image[:, :, 0]
+    g = image[:, :, 1]
+    b = image[:, :, 2]
 
-    cluster_means = [depth_vals[labels==i].mean() for i in range(2)]
-    leaf_cluster = np.argmin(cluster_means)
+    exg = 2 * g - r - b
 
-    mask = labels.reshape(depth_map.shape) == leaf_cluster
-    return mask
+    # normalize for stability
+    exg = (exg - np.min(exg)) / (np.max(exg) - np.min(exg) + 1e-8)
 
-def get_foreground_mask_colour(image):
-    # Convert image (RGB) to HSV
-    hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+    # Otsu threshold (adaptive per image)
+    exg_uint8 = (exg * 255).astype(np.uint8)
+    _, mask = cv2.threshold(exg_uint8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Use only H + S channels for clustering
-    hs = hsv[:, :, :2].reshape(-1, 2).astype(np.float32)
-
-    # Run KMeans on (H, S)
-    kmeans = KMeans(n_clusters=2, n_init=10)
-    labels = kmeans.fit_predict(hs)
-    centers = kmeans.cluster_centers_  # shape: (2, 2) -> (H, S)
-
-    green_cluster = np.argmin(np.abs(centers[:, 0] - 60))
-
-    # Build mask
-    mask = (labels.reshape(image.shape[:2]) == green_cluster).astype(np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8)).astype(bool)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
+    mask = mask.astype(bool)
 
     return mask
 
@@ -131,7 +120,8 @@ def dbscan(depth_map, image, show=False):
     resized_image = cv2.resize(image, (DOWNSAMPLE_SIZE, DOWNSAMPLE_SIZE))
 
     # kmeans to separate plant from soil based on colour
-    mask = get_foreground_mask_colour(resized_image)
+    # mask = get_foreground_mask_colour(resized_image)
+    mask = get_foreground_mask_thresh(resized_image)
 
     if show:
         plt.subplot(1, 2, 1)
@@ -188,6 +178,31 @@ def dbscan(depth_map, image, show=False):
 
     return centroids
 
+def compute_circularity(mask):
+
+    mask = mask.astype(np.uint8)
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if len(contours) == 0:
+        return 0.0
+
+    # use largest contour (main leaf body)
+    cnt = max(contours, key=cv2.contourArea)
+
+    area = cv2.contourArea(cnt)
+    perimeter = cv2.arcLength(cnt, True)
+
+    if perimeter == 0:
+        return 0.0
+
+    circularity = 4 * np.pi * area / (perimeter ** 2)
+    return float(circularity)
+
 # segment the leaves with sam
 def segment_with_sam(image, centroids, predictor):
      
@@ -239,6 +254,11 @@ def segment_with_sam(image, centroids, predictor):
 
         # remove large masks that could just be the background or entire plants
         if mask_areas[selected_idx] > 0.2 * height * width:
+            continue
+
+        # check the circularity of the leaf
+        circularity = compute_circularity(selected_mask)
+        if circularity < CIRCULARITY_THRESHOLD:
             continue
 
         # combine the masks
@@ -367,6 +387,35 @@ def save_empty_mask(height, width, name, path):
     cv2.imwrite(os.path.join(path, name), empty_mask)
 
 
+def filter_small_leaves(segmented_mask, leaf_segmentations, keep_fraction=0.5, min_keep=8):
+
+    n = len(leaf_segmentations)
+
+    if n == 0:
+        return segmented_mask, leaf_segmentations
+
+    if n <= min_keep:
+        return segmented_mask, leaf_segmentations
+
+    areas = np.array([np.sum(m > 0) for m in leaf_segmentations])
+
+    n_keep = max(min_keep, int(n * keep_fraction))
+
+    # keep largest leaves
+    keep_indices = np.argsort(areas)[-n_keep:]
+
+    filtered = [leaf_segmentations[i] for i in keep_indices]
+
+    # rebuild mask
+    h, w = segmented_mask.shape[:2]
+    new_mask = np.zeros((h, w), dtype=np.uint8)
+
+    for i, m in enumerate(filtered, start=1):
+        new_mask[m > 0] = i
+
+    return new_mask, filtered
+
+
 def main():
     data = load_data(IMAGE_DATA_DIR, DEPTH_DATA_DIR)
 
@@ -392,6 +441,12 @@ def main():
             continue
 
         segmented_mask, leaf_segmentations = segment_with_sam(image, centroids, sam_predictor)
+
+        # plot_segmentation_mask(image, segmented_mask)
+
+        segmented_mask, leaf_segmentations = filter_small_leaves(segmented_mask, leaf_segmentations)
+
+        # plot_segmentation_mask(image, segmented_mask)
 
         if show:
             plot_segmentation_mask(image, segmented_mask)

@@ -5,8 +5,8 @@ from plots import *
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
-# PREDICTED_LEAVES = "./detection_out"
-
+PREDICTED_LEAVES = "./detection_out"
+# PREDICTED_LEAVES = "./samv3_out/merged"
 
 DATA_DIR = "../data/left"
 
@@ -90,7 +90,7 @@ def main():
     # see if their leaf is within the ground truth
     # this makes the score
 
-    show = False
+    show = True
 
     n = 5
     score_cum = 0

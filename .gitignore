@@ -3,3 +3,4 @@ __pycache__
 *.png
 *.jpg
 *.npz
+samv3_out
