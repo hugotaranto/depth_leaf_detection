@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import numpy as np
 import cv2
 
@@ -92,6 +93,7 @@ def show_dbscan_clusters(depth_map, filtered_xy, labels, image, depth, centroids
 
     axes[2].imshow(depth, cmap="plasma")
     axes[2].axis("off")
+    axes[2].set_title("Monocular Depth Map Estimation (Marigold)")
 
     # --- Right: clustered depth map
     unique_labels = np.unique(labels)
@@ -124,52 +126,140 @@ def show_dbscan_clusters(depth_map, filtered_xy, labels, image, depth, centroids
     plt.tight_layout()
     plt.show()
 
-
 def plot_segmentation_mask(image, mask):
-
     width, height = image.shape[:2]
+    combined_mask = np.ma.masked_where(mask == 0, mask)  # mask out zeros
 
-    combined_mask = np.ma.masked_where(mask == 0, mask) # mask out the zero values
+    # --- 1. Build custom "no-green" colormap ---
+    # Use hues that avoid green (skip 90–170° range)
+    safe_hues = np.concatenate([
+        np.linspace(0, 70, 6),     # reds–oranges–yellows
+        np.linspace(190, 300, 6),  # blues–purples–magentas
+    ])
 
-    # === Visualise with matplot === This is quite slow (takes majority of the runtime), could definitely be done faster using cv2 (or equivalent) directly
-    fig = plt.figure(figsize=(width / DPI, height / DPI), dpi=DPI)
+    # Number of unique nonzero labels in the mask
+    num_labels = int(np.max(mask))
+    hues = np.linspace(0, len(safe_hues) - 1, num_labels) % len(safe_hues)
+    hues = safe_hues[hues.astype(int)]
+
+    # Convert HSL to RGB
+    def hsl_to_rgb(h, s=0.7, l=0.5):
+        c = (1 - abs(2 * l - 1)) * s
+        x = c * (1 - abs((h / 60) % 2 - 1))
+        m = l - c / 2
+        if h < 60:      r, g, b = c, x, 0
+        elif h < 120:   r, g, b = x, c, 0
+        elif h < 180:   r, g, b = 0, c, x
+        elif h < 240:   r, g, b = 0, x, c
+        elif h < 300:   r, g, b = x, 0, c
+        else:            r, g, b = c, 0, x
+        return (r + m, g + m, b + m)
+
+    rgb_colors = np.array([hsl_to_rgb(h) for h in hues])
+    np.random.seed(42)
+    np.random.shuffle(rgb_colors)  # mix up similar tones
+    cmap = ListedColormap(rgb_colors)
+
+    # --- 2. Plot ---
+    fig = plt.figure(figsize=(width / (DPI * 2), height / (DPI * 2)), dpi=DPI)
     plt.imshow(image)
-    plt.imshow(combined_mask, alpha=0.5, cmap='tab10')
+    plt.imshow(combined_mask, alpha=0.5, cmap=cmap)
     plt.axis("off")
     plt.tight_layout(pad=0)
-
     plt.show()
 
+def display_pred_vs_gt(image, pred, gt, alpha=0.5):
+    """
+    image: original image (H, W, 3) in RGB
+    pred: predicted mask (H, W)
+    gt: ground truth mask (H, W)
+    alpha: transparency of overlay
+    """
 
-def visualise_top_leaves(image, leaf_segmentations, scores):
+    # Ensure image is float in [0,1]
+    img = image.copy().astype(np.float32)
+    if img.max() > 1.0:
+        img /= 255.0
 
+    # Create masks
+    gt_mask = gt > 0
+    pred_mask = pred > 0
+
+    # Create overlay
+    overlay = img.copy()
+
+    # Regions
+    gt_only = gt_mask & ~pred_mask
+    pred_only = pred_mask & ~gt_mask
+    overlap = gt_mask & pred_mask
+
+    # Apply colours (RGB this time!)
+    overlay[gt_only] = [0, 0, 1]     # blue
+    overlay[pred_only] = [1, 0, 0]   # red
+    overlay[overlap] = [1, 0, 1]     # purple
+
+    # Blend
+    blended = (1 - alpha) * img + alpha * overlay
+
+    # Clip just in case
+    blended = np.clip(blended, 0, 1)
+
+    # Plot
+    plt.figure(figsize=(6, 6))
+    plt.imshow(blended)
+    plt.title("GT (blue) vs Pred (red) | Overlap (purple)")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+    return blended
+
+
+def visualise_top_leaves(image, leaf_segmentations, scores, n):
     vis = image.copy()
 
-    colours = plt.cm.viridis(np.linspace(0, 1, len(scores)))[:, :3] * 255
+    total = len(scores)
+    n = min(n, total)
 
-    for i in range(len(scores)):
+    # --- sort by score (descending) ---
+    sorted_idx = np.argsort(scores)[::-1]
+
+    top_idx = set(sorted_idx[:n])
+    all_idx = range(total)
+
+    # --- Draw all leaves ---
+    for i in all_idx:
         mask = leaf_segmentations[i].astype(np.uint8)
         score = scores[i]
 
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        color = tuple(int(c) for c in colours[i])
+        # blue for top n, red otherwise
+        if i in top_idx:
+            color = (0, 0, 255)   # blue (matplotlib RGB later)
+        else:
+            color = (255, 0, 0)   # red
+
         cv2.drawContours(vis, contours, -1, color, 2)
 
-        # find centroid for text label
+        # centroid for label
         M = cv2.moments(mask)
         if M["m00"] > 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
 
-            label = f"#{i+1}: {score:.2f}"
-            cv2.putText(vis, label, (cx - 30, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+            rank = np.where(sorted_idx == i)[0][0] + 1
+            label = f"#{rank}: {score:.2f}"
 
+            cv2.putText(vis, label, (cx - 30, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+
+    # --- Convert BGR → RGB for matplotlib ---
+    vis_rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
+
+    # --- Display ---
     plt.figure(figsize=(10, 10))
-    plt.imshow(vis)
-    plt.title("Top Ranked Leaves by Visibility Score")
+    plt.imshow(vis_rgb)
+    plt.title(f"Top {n} (Blue) vs Others (Red)")
     plt.axis("off")
     plt.show()
-
-
