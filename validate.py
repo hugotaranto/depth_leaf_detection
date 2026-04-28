@@ -52,6 +52,7 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
         pass
 
     score = 0
+    iou_result = 0
 
     for label in range(1, n + 1):
         pred_mask = (pred == label)
@@ -70,7 +71,16 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
 
         # find most common GT label
         gt_label, count = np.unique(overlapping_gt, return_counts=True)
-        max_overlap = count.max()
+
+        max_overlap = 0
+        index = -1
+        for i in range(len(count)):
+            if count[i] > max_overlap:
+                max_overlap = count[i]
+                index = i
+
+        max_label = gt_label[index]
+        gt_mask = (gt == max_label)
 
         # fraction of predicted segment that overlaps best GT leaf
         overlap_ratio = max_overlap / np.sum(pred_mask)
@@ -78,7 +88,25 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
         if overlap_ratio >= overlap_thresh:
             score += 1
 
-    return score
+            # get the iou score
+            iou_result += iou_score(gt_mask, pred_mask)
+
+    return score, iou_result / score
+
+def iou_score(gt_segment, predicted_segment):
+
+    # ensure boolean
+    gt_segment = gt_segment.astype(bool)
+    predicted_segment = predicted_segment.astype(bool)
+
+    intersection = np.logical_and(gt_segment, predicted_segment).sum()
+    union = np.logical_or(gt_segment, predicted_segment).sum()
+
+    if union == 0:
+        return 0.0  # avoid division by zero
+
+    return intersection / union
+
 
 def main():
 
@@ -90,25 +118,29 @@ def main():
     # see if their leaf is within the ground truth
     # this makes the score
 
-    show = True
+    show = False
 
     n = 5
     score_cum = 0
+    iou_cum = 0
     
     # get the names
     image_names = os.listdir(IMAGE_DIR)
     for name in image_names:
         gt, pred, image = load_gt_pred_pairs(name, GROUND_TRUTH_DIR, PREDICTED_LEAVES, DATA_DIR)
 
-        score = validate(gt, pred, image=image, show=show, n=n)
+        score, iou_result = validate(gt, pred, image=image, show=show, n=n)
+        iou_cum += iou_result
         score_cum += score
 
-        print(f"{score} : {name}")
+        print(f"{score}/{n} leaves detected, IOU average: {iou_result:.4f} : {name}")
 
     n_images = len(image_names)
     overall_accuracy = (score_cum / n_images) / n
+    overall_iou = (iou_cum / n_images)
 
     print("OVERALL ACCURACY:", overall_accuracy)
+    print(f"OVERALL IOU SCORE: {overall_iou:.4f}")
 
 
 if __name__ == "__main__":
