@@ -2,11 +2,18 @@ import numpy as np
 import os
 import cv2
 from plots import *
+from downstream import leaf_area, leaf_cupping_mono, leaf_cupping_multi
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
 PREDICTED_LEAVES = "./detection_out"
 # PREDICTED_LEAVES = "./samv3_out/merged"
+
+MONOCULAR_DEPTH_DIR = "./mono_depths/depth_pro"
+MONO_DEPTH_TYPE = "DEPTH_PRO"
+
+# MONOCULAR_DEPTH_DIR = "./mono_depths/marigold"
+# MONO_DEPTH_TYPE = "MARIGOLD"
 
 DATA_DIR = "../data/left"
 
@@ -24,6 +31,36 @@ def load_gt_pred_pairs(name, gt_path, pred_path, image_path):
         raise RuntimeError(f"Could not read image: {name}")
 
     return gt, pred, image
+
+def load_mono_depth(name, data_dir, depth_type):
+
+    name = os.path.splitext(name)[0]
+    
+    if depth_type == "MARIGOLD":
+        # construct the depth name
+        depth_name = f"{name}_depth.npy"
+    elif depth_type == "DEPTH_PRO":
+        depth_name = f"{name}.npz"
+
+    else:
+        raise RuntimeError(f"Depth type: {depth_type} no supported")
+
+    depth_path = os.path.join(data_dir, depth_name)
+
+
+    if not os.path.exists(depth_path):
+        raise RuntimeError(f"Could not find depth corresponding depth file: {depth_path}")
+
+    if depth_type == "MARIGOLD":
+        depth = np.load(depth_path).astype(np.float32)
+    elif depth_type == "DEPTH_PRO":
+        depth = np.load(depth_path)
+        depth = depth["depth"].astype(np.float32)
+    else:
+        raise RuntimeError(f"Depth type: {depth_type} no supported")
+
+    return depth
+
 
 def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
     """
@@ -134,6 +171,18 @@ def main():
         score_cum += score
 
         print(f"{score}/{n} leaves detected, IOU average: {iou_result:.4f} : {name}")
+
+        # get the average leaf area
+        av_area = leaf_area(pred, n=n)
+
+        print(f"Average leaf area: {av_area:.1f} Px")
+        print()
+
+        # Calculate the leaf cupping
+        mono_depth = load_mono_depth(name, MONOCULAR_DEPTH_DIR, MONO_DEPTH_TYPE)
+
+        leaf_cupping_mono(pred, mono_depth, n, image=image, display=True)
+
 
     n_images = len(image_names)
     overall_accuracy = (score_cum / n_images) / n

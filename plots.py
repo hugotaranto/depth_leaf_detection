@@ -263,3 +263,122 @@ def visualise_top_leaves(image, leaf_segmentations, scores, n):
     plt.title(f"Top {n} (Blue) vs Others (Red)")
     plt.axis("off")
     plt.show()
+
+def get_mask_contours(mask):
+    mask_uint8 = mask.astype(np.uint8)
+
+    contours, _ = cv2.findContours(
+        mask_uint8,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    return contours
+
+
+def draw_contour_overlay(image, mask, color=(255, 0, 0), thickness=1):
+    overlay = image.copy()
+
+    contours = get_mask_contours(mask)
+
+    cv2.drawContours(
+        overlay,
+        contours,
+        -1,
+        color,
+        thickness
+    )
+
+    return overlay
+
+def plot_leaf_depth_3d(mask, mono_depth, downsample=1, image=None, disp_mask=None):
+    """
+    mask: (H, W) boolean
+    mono_depth: (H, W) depth map
+    image: (H, W, 3) optional
+    """
+    
+    if image is not None:
+
+        if disp_mask is None:
+            disp_mask = mask
+
+        # overlay the mask onto the image
+        # overlay = image.copy()
+        #
+        # color_layer = np.zeros_like(image)
+        # color_layer[disp_mask] = (255, 0, 0)
+        # alpha = 0.4
+        #
+        # # blend
+        # overlay = np.where(disp_mask[..., None],
+        #                    (1 - alpha) * image + alpha * color_layer,
+        #                    image)
+        # 
+        # image = overlay.astype(np.uint8)
+
+        image = draw_contour_overlay(image, disp_mask)
+
+        # now crop the image to the mask
+        pad = 200
+        ys, xs = np.where(disp_mask)
+
+        if len(xs) == 0 or len(ys) == 0:
+            return None  # empty mask
+
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+
+        # optional padding
+        x_min = max(x_min - pad, 0)
+        y_min = max(y_min - pad, 0)
+        x_max = x_max + pad
+        y_max = y_max + pad
+
+        image = image[y_min:y_max, x_min:x_max]
+
+
+    ys, xs = np.where(mask)
+    zs = mono_depth[ys, xs]
+
+    if downsample > 1:
+        ys = ys[::downsample]
+        xs = xs[::downsample]
+        zs = zs[::downsample]
+
+    # ---- figure layout ----
+    if image is not None:
+        fig = plt.figure(figsize=(16, 8))
+
+        # Left: image
+        ax_img = fig.add_subplot(1, 2, 1)
+        ax_img.imshow(image)
+        ax_img.set_title("Leaf (image)")
+        ax_img.axis('off')
+
+        # Right: 3D plot
+        ax = fig.add_subplot(1, 2, 2, projection='3d')
+
+    else:
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+    # ---- 3D scatter ----
+    scatter = ax.scatter(xs, ys, zs, c=zs, s=2)
+
+    ax.view_init(elev=65, azim=90)
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Depth')
+
+
+    ax.invert_yaxis()
+    ax.invert_zaxis()
+
+    ax.auto_scale_xyz(xs, ys, zs)
+
+    fig.colorbar(scatter, ax=ax, label='Depth')
+
+    plt.tight_layout()
+    plt.show()
