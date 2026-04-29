@@ -303,20 +303,6 @@ def plot_leaf_depth_3d(mask, mono_depth, downsample=1, image=None, disp_mask=Non
         if disp_mask is None:
             disp_mask = mask
 
-        # overlay the mask onto the image
-        # overlay = image.copy()
-        #
-        # color_layer = np.zeros_like(image)
-        # color_layer[disp_mask] = (255, 0, 0)
-        # alpha = 0.4
-        #
-        # # blend
-        # overlay = np.where(disp_mask[..., None],
-        #                    (1 - alpha) * image + alpha * color_layer,
-        #                    image)
-        # 
-        # image = overlay.astype(np.uint8)
-
         image = draw_contour_overlay(image, disp_mask)
 
         # now crop the image to the mask
@@ -379,6 +365,76 @@ def plot_leaf_depth_3d(mask, mono_depth, downsample=1, image=None, disp_mask=Non
     ax.auto_scale_xyz(xs, ys, zs)
 
     fig.colorbar(scatter, ax=ax, label='Depth')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_leaf_from_points(xs, ys, zs, a, b, c, image=None, mask=None):
+    """
+    xs, ys, zs: leaf points
+    a, b, c: plane coefficients (z = ax + by + c)
+    """
+
+    # ---- compute plane + residuals ----
+    z_plane = a * xs + b * ys + c
+    residuals = zs - z_plane
+
+    # ---- layout ----
+    if image is not None and mask is not None:
+
+        # make the cropped image with boundary around leaf
+        image = draw_contour_overlay(image, mask)
+
+        pad = 200
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+
+        height, width, _ = image.shape
+
+        x_min = max(x_min - pad, 0)
+        y_min = max(y_min - pad, 0)
+        x_max = min(x_max + pad, width)
+        y_max = min(y_max + pad, height)
+
+        image = image[y_min:y_max, x_min:x_max]
+
+        fig = plt.figure(figsize=(16, 8))
+
+        ax_img = fig.add_subplot(1, 2, 1)
+        ax_img.imshow(image)
+        ax_img.set_title("Leaf")
+        ax_img.axis('off')
+
+        ax = fig.add_subplot(1, 2, 2, projection='3d')
+    else:
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+    # ---- scatter coloured by residuals ----
+    scatter = ax.scatter(xs, ys, zs, c=residuals, cmap='coolwarm', s=2)
+
+    # ---- plane surface ----
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(xs.min(), xs.max(), 30),
+        np.linspace(ys.min(), ys.max(), 30)
+    )
+    grid_z = a * grid_x + b * grid_y + c
+
+    ax.plot_surface(grid_x, grid_y, grid_z, alpha=0.3, color='gray')
+
+    # ---- formatting ----
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Depth')
+
+    ax.view_init(elev=65, azim=90)
+    ax.invert_yaxis()
+    ax.invert_zaxis()
+
+    ax.auto_scale_xyz(xs, ys, zs)
+
+    fig.colorbar(scatter, ax=ax, label='Residual (cupping)')
 
     plt.tight_layout()
     plt.show()
