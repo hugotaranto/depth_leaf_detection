@@ -6,7 +6,7 @@ from downstream import leaf_area, leaf_cupping_mono, leaf_cupping_multi
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
-PREDICTED_LEAVES = "./detection_out"
+PREDICTED_LEAVES = "./detection_out/left"
 # PREDICTED_LEAVES = "./samv3_out/merged"
 
 MONOCULAR_DEPTH_DIR = "./mono_depths/depth_pro"
@@ -16,6 +16,7 @@ MONO_DEPTH_TYPE = "DEPTH_PRO"
 # MONO_DEPTH_TYPE = "MARIGOLD"
 
 DATA_DIR = "../data/left"
+BINS_FILE = "./bins.npz"
 
 def load_gt_pred_pairs(name, gt_path, pred_path, image_path):
     # load in each mask
@@ -145,6 +146,37 @@ def iou_score(gt_segment, predicted_segment):
     return intersection / union
 
 
+def compute_bins(scores, n_bins=10):
+    scores = np.asarray(scores)
+
+    # percentiles from 0 → 100
+    percentiles = np.linspace(0, 100, n_bins + 1)
+    bins = np.percentile(scores, percentiles)
+
+    # ensure strictly increasing (handles duplicates)
+    bins = np.unique(bins)
+
+    return bins
+
+def save_cupping_curvature_bins(cupping_bins, curvature_bins, filepath="leaf_bins.npz"):
+    np.savez(
+        filepath,
+        cupping_bins=np.asarray(cupping_bins),
+        curvature_bins=np.asarray(curvature_bins)
+    )
+
+
+def load_bins(filepath="cupping_bins.npy"):
+    try:
+        data = np.load(filepath)
+
+        cupping_bins = data["cupping_bins"]
+        curvature_bins = data["curvature_bins"]
+
+        return cupping_bins, curvature_bins
+    except:
+        return None, None
+
 def main():
 
     # load in the ground truth
@@ -155,12 +187,17 @@ def main():
     # see if their leaf is within the ground truth
     # this makes the score
 
-    show = False
+    show = True
 
-    n = 5
+    n = 2
     score_cum = 0
     iou_cum = 0
-    
+
+    cup_scores = []
+    curve_scores = []
+
+    cupping_bins, curvature_bins = load_bins(BINS_FILE)
+
     # get the names
     image_names = os.listdir(IMAGE_DIR)
     for name in image_names:
@@ -181,7 +218,10 @@ def main():
         # Calculate the leaf cupping
         mono_depth = load_mono_depth(name, MONOCULAR_DEPTH_DIR, MONO_DEPTH_TYPE)
 
-        leaf_cupping_mono(pred, mono_depth, n, image=image, display=True)
+        cupping_av, cupping_scores, curvature_scores = leaf_cupping_mono(pred, mono_depth, curvature_bins, cupping_bins, n, image=image, display=False)
+
+        cup_scores.extend(cupping_scores)
+        curve_scores.extend(curvature_scores)
 
 
     n_images = len(image_names)
@@ -190,6 +230,11 @@ def main():
 
     print("OVERALL ACCURACY:", overall_accuracy)
     print(f"OVERALL IOU SCORE: {overall_iou:.4f}")
+
+    cupping_bins = compute_bins(cup_scores, 10)
+    curve_bins = compute_bins(curve_scores, 10)
+
+    save_cupping_curvature_bins(cupping_bins, curve_bins, filepath=BINS_FILE)
 
 
 if __name__ == "__main__":

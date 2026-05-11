@@ -27,12 +27,18 @@ def leaf_area_mono(leaf_masks, mono_depth, n=5):
 def leaf_cupping_multi(leaf_masks, ):
     pass
 
+def assign_bin(score, bins):
+    idx = np.digitize(score, bins, right=True)
+    return max(1, min(idx, len(bins) - 1))
 
-def leaf_cupping_mono(leaf_masks, mono_depth, n=5, remove_outliers=False, image=None, display=False):
+def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=None, n=5, remove_outliers=False, image=None, display=False):
 
     n = leaf_count_cap(leaf_masks, n)
 
     cupping_cum = 0
+
+    cupping_scores = []
+    curvature_scores = []
 
     for label in range(1, n+1):
 
@@ -82,26 +88,33 @@ def leaf_cupping_mono(leaf_masks, mono_depth, n=5, remove_outliers=False, image=
         qa, qb, qc, qd, qe, qf = coeffs_quad
         curvature_score = np.sqrt(qa**2 + qb**2 + qc**2)
 
-        # normalise the cupping score:
-        # depth_range = zs.max() - zs.min() + 1e-6
-        # norm_cupping = cupping_score / depth_range
-
         cupping_cum += cupping_score
 
+        cupping_scores.append(cupping_score)
+        curvature_scores.append(curvature_score)
+
+        if cupping_bins is not None:
+            cupping_binned = assign_bin(cupping_score, cupping_bins)
+        else:
+            cupping_binned = None
+
+        if curvature_bins is not None:
+            curvature_binned = assign_bin(curvature_score, curvature_bins)
+        else:
+            curvature_binned = None
+
         if display:
+            # print(f"Leaf cupping score: {cupping_binned}")
+            # print(f"Leaf curvature score: {curvature_binned}\n")
             print(f"Leaf cupping score: {cupping_score}")
             print(f"Leaf curvature score: {curvature_score}\n")
 
-            # plot_leaf_depth_3d(clean_mask, mono_depth, image=image, disp_mask=mask)
             plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
+            # plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
 
     cupping_av = cupping_cum / n
 
-    return cupping_av
-        
-
-
-
+    return cupping_av, cupping_scores, curvature_scores
 
 
 def erode_mask(mask, kernel_size=3, iterations=1):

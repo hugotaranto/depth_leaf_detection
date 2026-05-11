@@ -438,3 +438,100 @@ def plot_leaf_from_points(xs, ys, zs, a, b, c, image=None, mask=None):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image=None, mask=None):
+    """
+    xs, ys, zs: leaf points
+    coeffs_quad: (qa, qb, qc, qd, qe, qf)
+    """
+
+    qa, qb, qc, qd, qe, qf = coeffs_quad
+
+    # ---- layout ----
+    if image is not None and mask is not None:
+
+        image = draw_contour_overlay(image, mask)
+
+        pad = 200
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+
+        height, width, _ = image.shape
+
+        x_min = max(x_min - pad, 0)
+        y_min = max(y_min - pad, 0)
+        x_max = min(x_max + pad, width)
+        y_max = min(y_max + pad, height)
+
+        image = image[y_min:y_max, x_min:x_max]
+
+        # shift coords to cropped frame
+        xs_plot = xs - x_min
+        ys_plot = ys - y_min
+
+        fig = plt.figure(figsize=(16, 8))
+
+        ax_img = fig.add_subplot(1, 2, 1)
+        ax_img.imshow(image)
+        ax_img.set_title("Leaf")
+        ax_img.axis('off')
+
+        ax = fig.add_subplot(1, 2, 2, projection='3d')
+
+    else:
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        xs_plot = xs
+        ys_plot = ys
+
+    # ---- scatter ----
+    scatter = ax.scatter(xs_plot, ys_plot, zs, c=zs, s=2)
+
+    # ---- quadratic surface ----
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(xs.min(), xs.max(), 40),
+        np.linspace(ys.min(), ys.max(), 40)
+    )
+
+    grid_z = (
+        qa * grid_x**2 +
+        qb * grid_y**2 +
+        qc * grid_x * grid_y +
+        qd * grid_x +
+        qe * grid_y +
+        qf
+    )
+
+    # shift grid if cropped
+    if image is not None and mask is not None:
+        grid_x_plot = grid_x - x_min
+        grid_y_plot = grid_y - y_min
+    else:
+        grid_x_plot = grid_x
+        grid_y_plot = grid_y
+
+    ax.plot_surface(
+        grid_x_plot,
+        grid_y_plot,
+        grid_z,
+        alpha=0.4,
+        color='green'
+    )
+
+    # ---- formatting ----
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Depth')
+
+    ax.view_init(elev=65, azim=90)
+    ax.invert_yaxis()
+    ax.invert_zaxis()
+
+    ax.auto_scale_xyz(xs_plot, ys_plot, zs)
+
+    fig.colorbar(scatter, ax=ax, label='Depth')
+
+    plt.tight_layout()
+    plt.show()

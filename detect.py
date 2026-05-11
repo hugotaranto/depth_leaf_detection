@@ -9,13 +9,13 @@ import torch
 
 from plots import *
 
-IMAGE_DATA_DIR = '../data/left'
+IMAGE_DATA_DIR = '../data/right'
 
 # DEPTH_TYPE = "DEPTH_PRO"
 # DEPTH_DATA_DIR = './mono_depths/depth_pro'
 
 DEPTH_TYPE = "MARIGOLD"
-DEPTH_DATA_DIR = '../Marigold/output/depth_npy'
+DEPTH_DATA_DIR = './mono_depths/marigold'
 
 DOWNSAMPLE_SIZE = 256
 
@@ -24,7 +24,7 @@ SAM_MODEL_TYPE = 'vit_l'
 # SAM_MODEL_PATH = './sam_base_checkpoint.pth'
 SAM_MODEL_PATH = './sam_checkpoints/sam_vit_l_0b3195.pth'
 
-OUTPUT_DIR = "./detection_out"
+OUTPUT_DIR = "./detection_out/right"
 
 CIRCULARITY_THRESHOLD = 0.75
 
@@ -278,7 +278,7 @@ def mask_iou(mask1, mask2):
 
 
 # score the leaves, right now I am checking the disparity puts the target leaf closer to the camera than the border leaves
-def score_leaves(depth_map, leaf_segmentations, border_width=2, disparity_threshold=0.01):
+def score_leaves(depth_map, leaf_segmentations, border_width=2, disparity_threshold=0.01, display=False):
     
     scores = []
     
@@ -446,7 +446,7 @@ def main():
 
         segmented_mask, leaf_segmentations = filter_small_leaves(segmented_mask, leaf_segmentations)
 
-        # plot_segmentation_mask(image, segmented_mask)
+        plot_segmentation_mask(image, segmented_mask)
 
         if show:
             plot_segmentation_mask(image, segmented_mask)
