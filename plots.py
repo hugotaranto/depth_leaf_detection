@@ -236,9 +236,9 @@ def visualise_top_leaves(image, leaf_segmentations, scores, n):
 
         # blue for top n, red otherwise
         if i in top_idx:
-            color = (0, 0, 255)   # blue (matplotlib RGB later)
+            color = (255, 0, 0)   # blue
         else:
-            color = (255, 0, 0)   # red
+            color = (0, 0, 255)   # red 
 
         cv2.drawContours(vis, contours, -1, color, 2)
 
@@ -534,4 +534,88 @@ def plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image=None, mask=None):
     fig.colorbar(scatter, ax=ax, label='Depth')
 
     plt.tight_layout()
+    plt.show()
+
+def visualise_leaf_regions(
+    depth_map,
+    mask,
+    inner_border,
+    outer_ring,
+    padding=200,
+    figsize=(8, 8),
+):
+    """
+    Visualize cropped leaf scoring regions.
+
+    Colors:
+    - green = leaf mask
+    - red   = inner border
+    - blue  = outer ring
+    """
+
+    #
+    # Find crop bounds from mask
+    #
+
+    ys, xs = np.where(mask > 0)
+
+    if len(ys) == 0:
+        print("Empty mask")
+        return
+
+    y0 = max(0, ys.min() - padding)
+    y1 = min(depth_map.shape[0], ys.max() + padding)
+
+    x0 = max(0, xs.min() - padding)
+    x1 = min(depth_map.shape[1], xs.max() + padding)
+
+    #
+    # Crop everything
+    #
+
+    depth_crop = depth_map[y0:y1, x0:x1]
+    mask_crop = mask[y0:y1, x0:x1]
+    inner_crop = inner_border[y0:y1, x0:x1]
+    outer_crop = outer_ring[y0:y1, x0:x1]
+
+    #
+    # Normalize depth image
+    #
+
+    depth_vis = depth_crop.astype(np.float32).copy()
+
+    valid = np.isfinite(depth_vis)
+
+    if np.any(valid):
+        dmin = np.min(depth_vis[valid])
+        dmax = np.max(depth_vis[valid])
+
+        if dmax > dmin:
+            depth_vis[valid] = (
+                (depth_vis[valid] - dmin)
+                / (dmax - dmin)
+            )
+
+    #
+    # Convert grayscale depth to RGB
+    #
+
+    rgb = np.stack([depth_vis] * 3, axis=-1)
+
+    #
+    # Overlay regions
+    #
+
+    rgb[mask_crop.astype(bool)] = [0.0, 1.0, 0.0]
+    rgb[outer_crop.astype(bool)] = [0.0, 0.0, 1.0]
+    rgb[inner_crop.astype(bool)] = [1.0, 0.0, 0.0]
+
+    #
+    # Display
+    #
+
+    plt.figure(figsize=figsize)
+    plt.imshow(rgb)
+    plt.title("Leaf Scoring Regions")
+    plt.axis("off")
     plt.show()

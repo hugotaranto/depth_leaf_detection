@@ -9,13 +9,15 @@ import torch
 
 from plots import *
 
-IMAGE_DATA_DIR = '../data/right'
+IMAGE_DATA_DIR = '../data/left'
 
 # DEPTH_TYPE = "DEPTH_PRO"
 # DEPTH_DATA_DIR = './mono_depths/depth_pro'
 
 DEPTH_TYPE = "MARIGOLD"
 DEPTH_DATA_DIR = './mono_depths/marigold'
+
+DEPTH_PRO_DATA_DIR = "./mono_depths/depth_pro"
 
 DOWNSAMPLE_SIZE = 256
 
@@ -24,7 +26,7 @@ SAM_MODEL_TYPE = 'vit_l'
 # SAM_MODEL_PATH = './sam_base_checkpoint.pth'
 SAM_MODEL_PATH = './sam_checkpoints/sam_vit_l_0b3195.pth'
 
-OUTPUT_DIR = "./detection_out/right"
+OUTPUT_DIR = "./detection_out/test"
 
 CIRCULARITY_THRESHOLD = 0.75
 
@@ -67,7 +69,12 @@ def load_data(image_dir, depth_dir):
         else:
             raise RuntimeError(f"Depth type: {DEPTH_TYPE} no supported")
 
-        image_depth_pairs.append((image, depth, name))
+        depth_pro_name = f"{base_name}.npz"
+        depth_pro_path = os.path.join(DEPTH_PRO_DATA_DIR, depth_pro_name)
+
+        depth_pro_map = np.load(depth_pro_path)["depth"].astype(np.float32)
+
+        image_depth_pairs.append((image, depth, name, depth_pro_map))
 
     return image_depth_pairs
 
@@ -277,50 +284,106 @@ def mask_iou(mask1, mask2):
     return intersection / union
 
 
-# score the leaves, right now I am checking the disparity puts the target leaf closer to the camera than the border leaves
-def score_leaves(depth_map, leaf_segmentations, border_width=2, disparity_threshold=0.01, display=False):
-    
+def score_leaves(
+    depth_map,
+    leaf_segmentations,
+    inset=4,
+    border_distance=4,
+    display=False
+):
+
     scores = []
-    
-    for i in range(len(leaf_segmentations)):
 
-        mask = leaf_segmentations[i].astype(np.uint8)
-        # get leaf border
-        kernel = np.ones((3, 3), np.uint8)
-        dilated = cv2.dilate(mask, kernel, iterations=1)
-        border = dilated - mask
+    kernel = np.ones((3, 3), np.uint8)
 
-        # get outer ring just beyond border
-        outer = cv2.dilate(dilated, kernel, iterations=border_width) - dilated
+    for mask in leaf_segmentations:
 
-        # coordinates
-        border_coords = np.column_stack(np.where(border > 0))
-        outer_coords = np.column_stack(np.where(outer > 0))
+        mask = mask.astype(np.uint8)
 
-        if len(border_coords) == 0 or len(outer_coords) == 0:
+        #
+        # INNER BORDER
+        #
+
+        eroded = cv2.erode(mask, kernel, iterations=inset)
+
+        if np.count_nonzero(eroded) == 0:
             scores.append(0)
             continue
 
-        num_occluded = 0
-        num_checked = 0
+        inner_border = (
+            eroded
+            - cv2.erode(eroded, kernel, iterations=1)
+        )
 
-        # for each border pixel, sample nearby outer pixels
-        for (y, x) in border_coords:
+        #
+        # OUTER RING
+        #
+
+        outer_ring = (
+            cv2.dilate(mask, kernel, iterations=border_distance + 1)
+            - cv2.dilate(mask, kernel, iterations=border_distance)
+        )
+
+        if display:
+            visualise_leaf_regions(depth_map, mask, inner_border, outer_ring)
+
+        inner_coords = np.column_stack(np.where(inner_border > 0))
+        outer_coords = np.column_stack(np.where(outer_ring > 0))
+
+        if len(inner_coords) == 0 or len(outer_coords) == 0:
+            scores.append(0)
+            continue
+
+        outer_depth_values = depth_map[
+            outer_coords[:, 0],
+            outer_coords[:, 1]
+        ]
+
+        valid_outer = np.isfinite(outer_depth_values)
+
+        outer_coords = outer_coords[valid_outer]
+        outer_depth_values = outer_depth_values[valid_outer]
+
+        if len(outer_coords) == 0:
+            scores.append(0)
+            continue
+
+        num_checked = 0
+        num_occluded = 0
+
+        #
+        # For each inner border pixel: find nearest outer pixel
+        #
+
+        score_cum = 0
+
+        for y, x in inner_coords:
+
+            border_depth = depth_map[y, x]
+
+            if not np.isfinite(border_depth):
+                continue
 
             num_checked += 1
 
-            y0, y1 = max(0, y - 2), min(depth_map.shape[0], y + 3)
-            x0, x1 = max(0, x - 2), min(depth_map.shape[1], x + 3)
+            # compute squared distances to all outer points
+            dy = outer_coords[:, 0] - y
+            dx = outer_coords[:, 1] - x
+            dist2 = dy * dy + dx * dx
 
-            border_depth = depth_map[y, x]
-            local_outer = outer[y0:y1, x0:x1]
-            outer_depths = depth_map[y0:y1, x0:x1][local_outer.astype(bool)]
+            nearest_idx = np.argmin(dist2)
 
-            # check if the outer depths are closer to the camera (overlapping the target leaf)
-            if np.any(outer_depths < border_depth - disparity_threshold): 
-                num_occluded += 1
+            outer_depth = outer_depth_values[nearest_idx]
 
-        scores.append(1 - (num_occluded / num_checked))
+            # score for the occlusion
+            score_cum += outer_depth - border_depth
+
+        if num_checked == 0:
+            scores.append(0)
+        else:
+            scores.append(
+                score_cum / num_checked
+            )
 
     return scores
 
@@ -430,6 +493,7 @@ def main():
         image = data[i][0]
         depth_map = data[i][1]
         name = data[i][2]
+        depth_pro = data[i][3]
 
         h, w = image.shape[:2]
 
@@ -446,17 +510,17 @@ def main():
 
         segmented_mask, leaf_segmentations = filter_small_leaves(segmented_mask, leaf_segmentations)
 
-        plot_segmentation_mask(image, segmented_mask)
+        # plot_segmentation_mask(image, segmented_mask)
 
         if show:
             plot_segmentation_mask(image, segmented_mask)
         # plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_map, leaf_segmentations, disparity_threshold=0.002, border_width=2)
+        scores = score_leaves(depth_pro, leaf_segmentations)
 
         # ranked_leaves, scores = get_top_n_leaves(leaf_segmentations, scores)
         # print(scores)
-        # visualise_top_leaves(image, ranked_leaves, scores)
+        # visualise_top_leaves(image, leaf_segmentations, scores, n=5)
 
         if show:
             visualise_top_leaves(image, leaf_segmentations, scores, n=5)

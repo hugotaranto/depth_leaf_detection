@@ -6,7 +6,7 @@ from downstream import leaf_area, leaf_cupping_mono, leaf_cupping_multi
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
-PREDICTED_LEAVES = "./detection_out/left"
+PREDICTED_LEAVES = "./detection_out/test"
 # PREDICTED_LEAVES = "./samv3_out/merged"
 
 MONOCULAR_DEPTH_DIR = "./mono_depths/depth_pro"
@@ -63,7 +63,7 @@ def load_mono_depth(name, data_dir, depth_type):
     return depth
 
 
-def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
+def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_score=0.4):
     """
     gt: ground truth mask (H, W) with labels
     pred: predicted mask (H, W) with labels ranked 1..N
@@ -84,10 +84,8 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
 
     # print(np.unique(cut_preds))
 
-    # show the masks
-    if show and image is not None:
-        display_pred_vs_gt(image, cut_preds, gt)
-        pass
+    num_leaves = len(np.unique(pred)) - 1 
+    n = min(n, num_leaves)
 
     score = 0
     iou_result = 0
@@ -129,7 +127,12 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
             # get the iou score
             iou_result += iou_score(gt_mask, pred_mask)
 
-    return score, iou_result / score
+    # show the masks
+    if (show or (score / n) <= min_score) and image is not None:
+        display_pred_vs_gt(image, cut_preds, gt)
+        pass
+
+    return score, n, iou_result / score
 
 def iou_score(gt_segment, predicted_segment):
 
@@ -187,11 +190,12 @@ def main():
     # see if their leaf is within the ground truth
     # this makes the score
 
-    show = True
+    show = False
 
-    n = 2
+    n = 5
     score_cum = 0
     iou_cum = 0
+    num_leaves_cum = 0
 
     cup_scores = []
     curve_scores = []
@@ -203,11 +207,13 @@ def main():
     for name in image_names:
         gt, pred, image = load_gt_pred_pairs(name, GROUND_TRUTH_DIR, PREDICTED_LEAVES, DATA_DIR)
 
-        score, iou_result = validate(gt, pred, image=image, show=show, n=n)
+        score, num_leaves, iou_result = validate(gt, pred, image=image, show=show, n=n, min_score=0.4)
         iou_cum += iou_result
         score_cum += score
 
-        print(f"{score}/{n} leaves detected, IOU average: {iou_result:.4f} : {name}")
+        num_leaves_cum += num_leaves
+
+        print(f"{score}/{num_leaves} leaves detected, IOU average: {iou_result:.4f} : {name}")
 
         # get the average leaf area
         av_area = leaf_area(pred, n=n)
@@ -225,7 +231,7 @@ def main():
 
 
     n_images = len(image_names)
-    overall_accuracy = (score_cum / n_images) / n
+    overall_accuracy = score_cum / num_leaves_cum
     overall_iou = (iou_cum / n_images)
 
     print("OVERALL ACCURACY:", overall_accuracy)
