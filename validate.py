@@ -6,7 +6,7 @@ from downstream import leaf_area, leaf_cupping_mono, leaf_cupping_multi
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
-PREDICTED_LEAVES = "./detection_out/left"
+PREDICTED_LEAVES = "./detection_out/left_new"
 # PREDICTED_LEAVES = "./samv3_out/merged"
 
 MONOCULAR_DEPTH_DIR = "./mono_depths/depth_pro"
@@ -129,7 +129,12 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None):
             # get the iou score
             iou_result += iou_score(gt_mask, pred_mask)
 
-    return score, iou_result / score
+    if score == 0:
+        iou_result = 0
+    else:
+        iou_result = iou_result / score
+
+    return score, iou_result
 
 def iou_score(gt_segment, predicted_segment):
 
@@ -189,7 +194,7 @@ def main():
 
     show = True
 
-    n = 2
+    n = 5
     score_cum = 0
     iou_cum = 0
 

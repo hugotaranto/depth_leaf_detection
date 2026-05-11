@@ -17,7 +17,10 @@ def leaf_area(leaf_masks, n=5):
 
         overall_area += pixel_count
 
-    return overall_area / n
+    if overall_area != 0:
+        return overall_area / n
+    else:
+        return overall_area
 
 def leaf_area_mono(leaf_masks, mono_depth, n=5):
     pass
@@ -112,7 +115,10 @@ def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=
             plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
             # plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
 
-    cupping_av = cupping_cum / n
+    if n != 0:
+        cupping_av = cupping_cum / n
+    else:
+        cupping_av = 0
 
     return cupping_av, cupping_scores, curvature_scores
 
