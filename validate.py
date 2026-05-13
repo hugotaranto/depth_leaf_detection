@@ -2,7 +2,7 @@ import numpy as np
 import os
 import cv2
 from plots import *
-from downstream import leaf_area, leaf_cupping_mono, leaf_cupping_multi
+from downstream import *
 
 IMAGE_DIR = "../data/left"
 GROUND_TRUTH_DIR = "./annotation_out"
@@ -207,7 +207,7 @@ def main():
     for name in image_names:
         gt, pred, image = load_gt_pred_pairs(name, GROUND_TRUTH_DIR, PREDICTED_LEAVES, DATA_DIR)
 
-        score, num_leaves, iou_result = validate(gt, pred, image=image, show=show, n=n, min_score=0.4)
+        score, num_leaves, iou_result = validate(gt, pred, image=image, show=show, n=n, min_score=0)
         iou_cum += iou_result
         score_cum += score
 
@@ -224,7 +224,10 @@ def main():
         # Calculate the leaf cupping
         mono_depth = load_mono_depth(name, MONOCULAR_DEPTH_DIR, MONO_DEPTH_TYPE)
 
-        cupping_av, cupping_scores, curvature_scores = leaf_cupping_mono(pred, mono_depth, curvature_bins, cupping_bins, n, image=image, display=False)
+        cupping_av, cupping_scores, curvature_scores = leaf_cupping_mono(pred, mono_depth, curvature_bins, cupping_bins, n, image=image, display=show)
+        
+        # savoyness_mean, savoyness_scores = savoyness_depth(pred, mono_depth, n=n, display=True, image=image)
+        savoyness_mean, savoyness_scores = savoyness(pred, image, n=n, display=True)
 
         cup_scores.extend(cupping_scores)
         curve_scores.extend(curvature_scores)

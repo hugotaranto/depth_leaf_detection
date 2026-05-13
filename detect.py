@@ -349,7 +349,6 @@ def score_leaves(
             continue
 
         num_checked = 0
-        num_occluded = 0
 
         #
         # For each inner border pixel: find nearest outer pixel

@@ -619,3 +619,257 @@ def visualise_leaf_regions(
     plt.title("Leaf Scoring Regions")
     plt.axis("off")
     plt.show()
+
+
+def plot_leaf_savoyness(
+    xs,
+    ys,
+    zs,
+    smooth_zs,
+    residuals,
+    image=None,
+    mask=None,
+):
+    """
+    Plot:
+    - original leaf depth surface
+    - smoothed leaf surface
+    - residual colouring (savoyness texture)
+
+    Parameters
+    ----------
+    xs, ys, zs:
+        Original leaf points
+
+    smooth_zs:
+        Smoothed depth values at leaf points
+
+    residuals:
+        zs - smooth_zs
+
+    image, mask:
+        Optional RGB image + segmentation mask
+    """
+
+    #
+    # Layout
+    #
+
+    if image is not None and mask is not None:
+
+        image = draw_contour_overlay(image, mask)
+
+        pad = 200
+
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+
+        height, width = image.shape[:2]
+
+        x_min = max(int(x_min - pad), 0)
+        y_min = max(int(y_min - pad), 0)
+
+        x_max = min(int(x_max + pad), width)
+        y_max = min(int(y_max + pad), height)
+
+        image_crop = image[y_min:y_max, x_min:x_max]
+
+        fig = plt.figure(figsize=(18, 8))
+
+        #
+        # image subplot
+        #
+
+        ax_img = fig.add_subplot(1, 2, 1)
+
+        ax_img.imshow(image_crop)
+        ax_img.set_title("Leaf")
+        ax_img.axis("off")
+
+        #
+        # 3D subplot
+        #
+
+        ax = fig.add_subplot(1, 2, 2, projection='3d')
+
+    else:
+
+        fig = plt.figure(figsize=(10, 10))
+        ax = fig.add_subplot(111, projection='3d')
+
+    #
+    # Original leaf surface
+    #
+
+    scatter = ax.scatter(
+        xs,
+        ys,
+        zs,
+        c=residuals,
+        cmap='coolwarm',
+        s=2,
+        alpha=0.9,
+        label='Original Surface'
+    )
+
+    #
+    # Smoothed surface
+    #
+
+    ax.scatter(
+        xs,
+        ys,
+        smooth_zs,
+        c='black',
+        s=1,
+        alpha=0.15,
+        label='Smoothed Surface'
+    )
+
+    #
+    # Optional connecting lines
+    # (shows residual displacement)
+    #
+
+    step = max(len(xs) // 1000, 1)
+
+    for i in range(0, len(xs), step):
+
+        ax.plot(
+            [xs[i], xs[i]],
+            [ys[i], ys[i]],
+            [smooth_zs[i], zs[i]],
+            alpha=0.08,
+            linewidth=0.5,
+            color='gray'
+        )
+
+    #
+    # Formatting
+    #
+
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Depth")
+
+    ax.set_title("Leaf Savoyness")
+
+    ax.view_init(elev=65, azim=90)
+
+    ax.invert_yaxis()
+    ax.invert_zaxis()
+
+    ax.auto_scale_xyz(xs, ys, zs)
+
+    fig.colorbar(
+        scatter,
+        ax=ax,
+        label='Residual Texture'
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap, crop_padding=200):
+
+    #
+    # Crop region around leaf
+    #
+
+    ys, xs = np.where(mask)
+
+    y_min = max(int(ys.min() - crop_padding), 0)
+    y_max = min(int(ys.max() + crop_padding), image.shape[0])
+
+    x_min = max(int(xs.min() - crop_padding), 0)
+    x_max = min(int(xs.max() + crop_padding), image.shape[1])
+
+    #
+    # Cropped images
+    #
+
+    image_crop = image[y_min:y_max, x_min:x_max]
+
+    texture_crop = texture[y_min:y_max, x_min:x_max]
+
+    lap_crop = lap[y_min:y_max, x_min:x_max]
+
+    valid_crop = valid_mask[y_min:y_max, x_min:x_max]
+
+    #
+    # Overlay visualisation
+    #
+
+    overlay = np.zeros_like(lap_crop)
+
+    overlay[valid_crop] = np.abs(
+        lap_crop[valid_crop]
+    )
+
+    #
+    # Draw contour overlay
+    #
+
+    image_vis = draw_contour_overlay(
+        image_crop.copy(),
+        mask[y_min:y_max, x_min:x_max]
+    )
+
+    removed_pixels = (
+        clean_mask &
+        ~valid_mask
+    )
+
+    removed_vis = image_crop.copy()
+
+    removed_crop = removed_pixels[
+        y_min:y_max,
+        x_min:x_max
+    ]
+
+    #
+    # colour removed pixels red
+    #
+
+    removed_vis[removed_crop] = [255, 0, 0]
+
+    #
+    # Plot
+    #
+
+    fig, axs = plt.subplots(
+        1,
+        5,
+        figsize=(24, 6)
+    )
+
+    axs[0].imshow(image_vis)
+    axs[0].set_title("Leaf")
+
+    axs[1].imshow(removed_vis)
+    axs[1].set_title("Removed Bright Pixels")
+
+    axs[2].imshow(
+        texture_crop,
+        cmap='gray'
+    )
+    axs[2].set_title("High-pass Texture")
+
+    axs[3].imshow(
+        lap_crop,
+        cmap='inferno'
+    )
+    axs[3].set_title("Laplacian")
+
+    axs[4].imshow(
+        overlay,
+        cmap='inferno'
+    )
+    axs[4].set_title("Savoy Texture")
+
+    for ax in axs:
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
