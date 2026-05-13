@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
 import cv2
+from sklearn.metrics import confusion_matrix
 
 DPI = 100
 
@@ -872,4 +873,240 @@ def plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap, cr
         ax.axis("off")
 
     plt.tight_layout()
+    plt.show()
+
+
+def plot_strategy_comparison(
+    results_med,
+    results_mean,
+    results_all,
+    title="Savoyness Strategy Comparison"
+):
+    """
+    Compare evaluation metrics across fitting strategies.
+    """
+
+    strategies = [
+        ("Fit Medians", results_med),
+        ("Fit Means", results_mean),
+        ("Fit All Leaves", results_all)
+    ]
+
+    metric_names = ["mae", "accuracy", "off_by_one"]
+
+    fig, axs = plt.subplots(1, 3, figsize=(18, 5))
+
+    for ax, metric in zip(axs, metric_names):
+
+        labels = []
+        vals = []
+
+        for fit_name, result_dict in strategies:
+
+            for method_name, metrics in result_dict.items():
+
+                labels.append(f"{fit_name}\n{method_name}")
+                vals.append(metrics[metric])
+
+        ax.bar(range(len(vals)), vals)
+
+        ax.set_xticks(range(len(vals)))
+        ax.set_xticklabels(labels, rotation=45, ha='right')
+
+        ax.set_title(metric.upper())
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(title)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_bins(
+    train_scores,
+    train_labels,
+    bins,
+    title="Learned Thresholds"
+):
+    """
+    Plot score distributions and learned thresholds.
+    """
+
+    plt.figure(figsize=(10, 6))
+
+    classes = sorted(np.unique(train_labels))
+
+    for cls in classes:
+
+        vals = [
+            s for s, l in zip(train_scores, train_labels)
+            if l == cls
+        ]
+
+        plt.hist(
+            vals,
+            bins=20,
+            alpha=0.5,
+            label=f"Class {cls}"
+        )
+
+    for b in bins:
+        plt.axvline(
+            b,
+            linestyle='--',
+            linewidth=2
+        )
+
+    plt.xlabel("Continuous Score")
+    plt.ylabel("Frequency")
+    plt.title(title)
+    plt.legend()
+
+    plt.show()
+
+
+# def predict_image_scores(
+#     test_leaf_scores,
+#     bins,
+#     method="binned_mean"
+# ):
+#     """
+#     Generate image-level predictions.
+#     """
+#
+#     preds = []
+#
+#     for scores in test_leaf_scores:
+#
+#         scores = np.asarray(scores)
+#
+#         if method == "raw_mean":
+#
+#             agg = np.mean(scores)
+#             pred = np.digitize(agg, bins) + 1
+#
+#         elif method == "raw_median":
+#
+#             agg = np.median(scores)
+#             pred = np.digitize(agg, bins) + 1
+#
+#         elif method == "binned_mean":
+#
+#             leaf_preds = np.digitize(scores, bins) + 1
+#             pred = int(np.round(np.mean(leaf_preds)))
+#
+#         elif method == "binned_median":
+#
+#             leaf_preds = np.digitize(scores, bins) + 1
+#             pred = int(np.round(np.median(leaf_preds)))
+#
+#         else:
+#             raise ValueError("Unknown method")
+#
+#         preds.append(pred)
+#
+#     return np.asarray(preds)
+
+
+def plot_prediction_scatter(
+    gt,
+    preds,
+    title="Predicted vs Ground Truth"
+):
+    """
+    Scatter plot of predictions vs GT.
+    """
+
+    gt = np.asarray(gt)
+    preds = np.asarray(preds)
+
+    plt.figure(figsize=(6, 6))
+
+    plt.scatter(gt, preds, alpha=0.7)
+
+    mn = min(gt.min(), preds.min())
+    mx = max(gt.max(), preds.max())
+
+    plt.plot([mn, mx], [mn, mx], '--')
+
+    plt.xlabel("Ground Truth")
+    plt.ylabel("Prediction")
+    plt.title(title)
+
+    plt.grid(True)
+
+    plt.show()
+
+
+def plot_confusion(
+    gt,
+    preds,
+    n_classes=9,
+    title="Confusion Matrix"
+):
+    """
+    Plot confusion matrix.
+    """
+
+    cm = confusion_matrix(
+        gt,
+        preds,
+        labels=np.arange(1, n_classes + 1)
+    )
+
+    plt.figure(figsize=(8, 8))
+
+    plt.imshow(cm)
+
+    plt.colorbar()
+
+    plt.xlabel("Predicted")
+    plt.ylabel("Ground Truth")
+
+    plt.xticks(range(n_classes), range(1, n_classes + 1))
+    plt.yticks(range(n_classes), range(1, n_classes + 1))
+
+    plt.title(title)
+
+    plt.show()
+
+
+def plot_leaf_score_distributions(
+    test_leaf_scores,
+    test_labels,
+    title="Leaf Score Distributions"
+):
+    """
+    Visualize leaf score distributions by GT class.
+    """
+
+    plt.figure(figsize=(10, 6))
+
+    classes = sorted(np.unique(test_labels))
+
+    for cls in classes:
+
+        vals = []
+
+        for scores, label in zip(
+            test_leaf_scores,
+            test_labels
+        ):
+
+            if label == cls:
+                vals.extend(scores)
+
+        plt.hist(
+            vals,
+            bins=20,
+            alpha=0.5,
+            label=f"GT {cls}"
+        )
+
+    plt.xlabel("Leaf Score")
+    plt.ylabel("Frequency")
+    plt.title(title)
+
+    plt.legend()
+
     plt.show()

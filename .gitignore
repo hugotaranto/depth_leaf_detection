@@ -5,3 +5,4 @@ __pycache__
 *.npz
 *.npy
 samv3_out
+data

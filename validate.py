@@ -2,21 +2,36 @@ import numpy as np
 import os
 import cv2
 from plots import *
-from downstream import *
+from downstream import savoyness, savoyness_depth, leaf_cupping_mono, leaf_area
+from constants import *
+from util import *
 
-IMAGE_DIR = "../data/left"
-GROUND_TRUTH_DIR = "./annotation_out"
-PREDICTED_LEAVES = "./detection_out/test"
-# PREDICTED_LEAVES = "./samv3_out/merged"
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error
 
-MONOCULAR_DEPTH_DIR = "./mono_depths/depth_pro"
-MONO_DEPTH_TYPE = "DEPTH_PRO"
+from dataclasses import dataclass, field
 
-# MONOCULAR_DEPTH_DIR = "./mono_depths/marigold"
-# MONO_DEPTH_TYPE = "MARIGOLD"
+DISPLAY = False
+NUM_LEAVES = 5
 
-DATA_DIR = "../data/left"
-BINS_FILE = "./bins.npz"
+@dataclass
+class Evaluation:
+    savoy_scores: list = field(default_factory=list)
+    savoy_means: list = field(default_factory=list)
+    savoy_medians: list = field(default_factory=list)
+    savoy_scores_list: list = field(default_factory=list)
+
+    savoy_labels: list = field(default_factory=list)
+    savoy_image_labels: list = field(default_factory=list)
+
+    cup_scores: list = field(default_factory=list)
+    cup_means: list = field(default_factory=list)
+    cup_medians: list = field(default_factory=list)
+    cup_scores_list: list = field(default_factory=list)
+
+    cup_labels: list = field(default_factory=list)
+    cup_image_labels: list = field(default_factory=list)
+
 
 def load_gt_pred_pairs(name, gt_path, pred_path, image_path):
     # load in each mask
@@ -63,13 +78,7 @@ def load_mono_depth(name, data_dir, depth_type):
     return depth
 
 
-def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_score=0.4):
-    """
-    gt: ground truth mask (H, W) with labels
-    pred: predicted mask (H, W) with labels ranked 1..N
-    n: number of top predicted leaves to check
-    overlap_thresh: fraction required to count as match
-    """
+def validate_predictions(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_score=0.4):
 
     # ensure single channel
     if gt.ndim == 3:
@@ -77,18 +86,14 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_scor
     if pred.ndim == 3:
         pred = pred[:, :, 0]
 
-    # print("Num Predictions", np.max(pred))
-
     cut_preds = pred.copy()
     cut_preds[cut_preds > n] = 0
-
-    # print(np.unique(cut_preds))
 
     num_leaves = len(np.unique(pred)) - 1 
     n = min(n, num_leaves)
 
     score = 0
-    iou_result = 0
+    iou_results = []
 
     for label in range(1, n + 1):
         pred_mask = (pred == label)
@@ -125,14 +130,14 @@ def validate(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_scor
             score += 1
 
             # get the iou score
-            iou_result += iou_score(gt_mask, pred_mask)
+            # iou_result += iou_score(gt_mask, pred_mask)
+            iou_results.append(iou_score(gt_mask, pred_mask))
 
     # show the masks
     if (show or (score / n) <= min_score) and image is not None:
         display_pred_vs_gt(image, cut_preds, gt)
-        pass
 
-    return score, n, iou_result / score
+    return score, n, iou_results
 
 def iou_score(gt_segment, predicted_segment):
 
@@ -149,101 +154,382 @@ def iou_score(gt_segment, predicted_segment):
     return intersection / union
 
 
-def compute_bins(scores, n_bins=10):
-    scores = np.asarray(scores)
+def predict_from_raw(raw_scores, bins, aggregation="median"):
 
-    # percentiles from 0 → 100
-    percentiles = np.linspace(0, 100, n_bins + 1)
-    bins = np.percentile(scores, percentiles)
+    raw_scores = np.asarray(raw_scores)
 
-    # ensure strictly increasing (handles duplicates)
-    bins = np.unique(bins)
+    if aggregation == "mean":
+        agg = np.mean(raw_scores)
 
-    return bins
+    elif aggregation == "median":
+        agg = np.median(raw_scores)
 
-def save_cupping_curvature_bins(cupping_bins, curvature_bins, filepath="leaf_bins.npz"):
-    np.savez(
-        filepath,
-        cupping_bins=np.asarray(cupping_bins),
-        curvature_bins=np.asarray(curvature_bins)
+    else:
+        raise ValueError("aggregation must be mean or median")
+
+    pred = np.digitize(agg, bins) + 1
+
+    return pred, agg
+
+
+def predict_from_binned(raw_scores, bins, aggregation="median"):
+
+    leaf_preds = np.digitize(raw_scores, bins) + 1
+
+    if aggregation == "mean":
+        pred = int(np.round(np.mean(leaf_preds)))
+
+    elif aggregation == "median":
+        pred = int(np.round(np.median(leaf_preds)))
+
+    else:
+        raise ValueError("aggregation must be mean or median")
+
+    return pred, leaf_preds
+
+
+def evaluate_predictions(preds, labels):
+
+    preds = np.asarray(preds)
+    labels = np.asarray(labels)
+
+    mae = mean_absolute_error(labels, preds)
+
+    accuracy = np.mean(preds == labels)
+
+    off_by_one = np.mean(
+        np.abs(preds - labels) <= 1
     )
 
+    return {
+        "mae": mae,
+        "accuracy": accuracy,
+        "off_by_one": off_by_one
+    }
 
-def load_bins(filepath="cupping_bins.npy"):
-    try:
-        data = np.load(filepath)
 
-        cupping_bins = data["cupping_bins"]
-        curvature_bins = data["curvature_bins"]
+def evaluate_strategies(
+    train_scores,
+    train_labels,
+    test_leaf_scores,
+    test_labels
+):
 
-        return cupping_bins, curvature_bins
-    except:
-        return None, None
+    #
+    # fit thresholds
+    #
+
+    bins = fit_bins(
+        train_scores,
+        train_labels
+    )
+
+    results = {}
+
+    strategies = [
+        ("raw_mean", predict_from_raw, "mean"),
+        ("raw_median", predict_from_raw, "median"),
+        ("binned_mean", predict_from_binned, "mean"),
+        ("binned_median", predict_from_binned, "median"),
+    ]
+
+    for name, fn, agg in strategies:
+
+        preds = []
+
+        for leaf_scores in test_leaf_scores:
+
+            if leaf_scores is None or len(leaf_scores) == 0:
+                continue
+
+            pred, _ = fn(
+                leaf_scores,
+                bins,
+                aggregation=agg
+            )
+
+            preds.append(pred)
+
+        metrics = evaluate_predictions(
+            preds,
+            test_labels[:len(preds)]
+        )
+
+        results[name] = metrics
+
+    return bins, results
+
+
+def predict_image_scores(
+    test_leaf_scores,
+    bins,
+    method="binned_mean"
+):
+
+    preds = []
+
+    for scores in test_leaf_scores:
+
+        scores = np.asarray(scores)
+
+        if method == "raw_mean":
+
+            agg = np.mean(scores)
+            pred = np.digitize(agg, bins) + 1
+
+        elif method == "raw_median":
+
+            agg = np.median(scores)
+            pred = np.digitize(agg, bins) + 1
+
+        elif method == "binned_mean":
+
+            leaf_preds = np.digitize(scores, bins) + 1
+            pred = int(np.round(np.mean(leaf_preds)))
+
+        elif method == "binned_median":
+
+            leaf_preds = np.digitize(scores, bins) + 1
+            pred = int(np.round(np.median(leaf_preds)))
+
+        else:
+            raise ValueError("Unknown method")
+
+        preds.append(pred)
+
+    return np.asarray(preds)
+
+
+def fit_bins(scores, labels, n_classes=9):
+
+    class_means = []
+
+    for i in range(1, n_classes + 1):
+
+        vals = [
+            s for s, l in zip(scores, labels)
+            if l == i
+        ]
+
+        if len(vals) == 0:
+            class_means.append(np.nan)
+        else:
+            class_means.append(np.median(vals))
+
+    class_means = np.array(class_means)
+
+    #
+    # interpolate missing classes
+    #
+
+    valid = np.isfinite(class_means)
+
+    class_means = np.interp(
+        np.arange(len(class_means)),
+        np.where(valid)[0],
+        class_means[valid]
+    )
+
+    #
+    # thresholds between classes
+    #
+
+    bins = []
+
+    for i in range(len(class_means) - 1):
+
+        midpoint = (
+            class_means[i]
+            + class_means[i + 1]
+        ) / 2
+
+        bins.append(midpoint)
+
+    return np.array(bins)
+
+
+def eval_images(names, n_leaves):
+    eval = Evaluation()
+
+    for name in names:
+
+        image = load_image(name, IMAGE_DIR)
+        detections = load_image(name, DETECTION_OUTPUT)
+
+        if DEPTH_TYPE == "MARIGOLD":
+            depth_dir = MARIGOLD_DIR
+        else:
+            depth_dir = DEPTH_PRO_DIR
+
+        depth = load_depth(name, depth_dir, DEPTH_TYPE)
+        savoyness_gt, cupping_gt = load_eval_scores(name, DATABASE)
+
+        cupping_res = leaf_cupping_mono(detections, depth, curvature_bins=None, cupping_bins=None, n=n_leaves, image=image, display=False)
+        if cupping_res is not None:
+            _, cupping_scores, _ = cupping_res
+        else:
+            cupping_scores = None
+
+        savoyness_res = savoyness(detections, image, n=n_leaves, display=False)
+        if savoyness_res is not None:
+            _, savoyness_scores = savoyness_res
+        else:
+            savoyness_scores = None
+
+        if savoyness_gt is not None and savoyness_scores is not None:
+            eval.savoy_scores_list.append(savoyness_scores)
+
+            eval.savoy_scores.extend(savoyness_scores)
+            eval.savoy_labels.extend([savoyness_gt] * len(savoyness_scores))
+
+            mean_savoyness = np.mean(savoyness_scores)
+            median_savoyness = np.median(savoyness_scores)
+
+            eval.savoy_means.append(mean_savoyness)
+            eval.savoy_medians.append(median_savoyness)
+
+            eval.savoy_image_labels.append(savoyness_gt)
+
+        if cupping_gt is not None and cupping_scores is not None:
+            eval.cup_scores_list.append(cupping_scores)
+
+            eval.cup_scores.extend(cupping_scores)
+            eval.cup_labels.extend([cupping_gt] * len(cupping_scores))
+
+            mean_cupping = np.mean(cupping_scores)
+            median_cupping = np.median(cupping_scores)
+
+            eval.cup_means.append(mean_cupping)
+            eval.cup_medians.append(median_cupping)
+
+            eval.cup_image_labels.append(cupping_gt)
+
+    return eval
+
+def results_analysis(train_eval, test_eval):
+    # FIT using medians
+    bins_med, results_med = evaluate_strategies(
+        train_scores=train_eval.savoy_medians,
+        train_labels=train_eval.savoy_image_labels,
+        test_leaf_scores=test_eval.savoy_scores_list,
+        test_labels=test_eval.savoy_image_labels
+    )
+    print("Fit with medians")
+    print(results_med, "\n\n")
+
+    #FIT using means
+    bins_mean, results_mean = evaluate_strategies(
+        train_scores=train_eval.savoy_means,
+        train_labels=train_eval.savoy_image_labels,
+        test_leaf_scores=test_eval.savoy_scores_list,
+        test_labels=test_eval.savoy_image_labels
+    )
+    print("Fit with means:")
+    print(results_mean, "\n\n")
+
+    # Fit using all leaves
+    bins_all, results_all = evaluate_strategies(
+        train_scores=train_eval.savoy_scores,
+        train_labels=train_eval.savoy_labels,
+        test_leaf_scores=test_eval.savoy_scores_list,
+        test_labels=test_eval.savoy_image_labels
+    )
+    print("Fit with all leaves:")
+    print(results_all)
+
+    plot_strategy_comparison(
+        results_med,
+        results_mean,
+        results_all
+    )
+
+    plot_bins(
+        train_eval.savoy_scores,
+        train_eval.savoy_labels,
+        bins_all,
+        title="Savoyness Thresholds"
+    )
+
+    preds = predict_image_scores(
+        test_eval.savoy_scores_list,
+        bins_all,
+        method="binned_mean"
+    )
+
+    plot_prediction_scatter(
+        test_eval.savoy_image_labels,
+        preds,
+        title="Savoyness Predictions"
+    )
+
+    plot_confusion(
+        test_eval.savoy_image_labels,
+        preds,
+        n_classes=9,
+        title="Savoyness Confusion Matrix"
+    )
+
+    plot_leaf_score_distributions(
+        test_eval.savoy_scores_list,
+        test_eval.savoy_image_labels
+    )
+
+def validate_downstream_scoring(image_dir, n_leaves):
+
+    # get the image names
+    image_names = os.listdir(image_dir)
+
+    valid_images = []
+    for name in image_names:
+        savoyness_gt, cupping = load_eval_scores(name, DATABASE)
+
+        if savoyness_gt is None and cupping is None:
+            continue
+        
+        valid_images.append(name)
+
+    # split the data into train/test
+    train_names, test_names = train_test_split(valid_images, test_size=0.2, random_state=10)
+
+    # build the train data
+    train_eval = eval_images(train_names, n_leaves)
+    test_eval = eval_images(test_names, n_leaves)
+
+    results_analysis(train_eval, test_eval)
+
+def validate_detection(image_dir, num_leaves):
+    
+    num_leaves_requested = 0
+    num_leaves_cum = 0
+    correct_preds = 0
+    iou_scores_cum = []
+
+    image_names = os.listdir(ANNOTATION_DIR)
+
+    for name in image_names:
+        image = load_image(name, image_dir)
+        detection = load_image(name, DETECTION_OUTPUT)
+        ground_truth = load_image(name, ANNOTATION_DIR)
+        
+        score, leaf_number, iou_scores = validate_predictions(ground_truth, detection, image=image, show=DISPLAY, n=num_leaves, min_score=-1)
+
+        correct_preds += score
+        num_leaves_cum += leaf_number
+        num_leaves_requested += num_leaves
+        iou_scores_cum.extend(iou_scores)
+
+    correct = correct_preds / num_leaves_cum
+    correct_requested = correct_preds / num_leaves_requested
+    iou_mean = np.mean(iou_scores_cum)
+
+    print(f"Correctly detected {correct * 100:.2f}% of leaves\nMean IOU segmentation accuracy: {iou_mean}")
+    print(f"From requested {correct_requested * 100:.2f}")
+
 
 def main():
+    validate_detection(IMAGE_DIR, NUM_LEAVES)
 
-    # load in the ground truth
-    # load in the generated leaves
-
-    # take the top n of the generated leaves
-
-    # see if their leaf is within the ground truth
-    # this makes the score
-
-    show = False
-
-    n = 5
-    score_cum = 0
-    iou_cum = 0
-    num_leaves_cum = 0
-
-    cup_scores = []
-    curve_scores = []
-
-    cupping_bins, curvature_bins = load_bins(BINS_FILE)
-
-    # get the names
-    image_names = os.listdir(IMAGE_DIR)
-    for name in image_names:
-        gt, pred, image = load_gt_pred_pairs(name, GROUND_TRUTH_DIR, PREDICTED_LEAVES, DATA_DIR)
-
-        score, num_leaves, iou_result = validate(gt, pred, image=image, show=show, n=n, min_score=0)
-        iou_cum += iou_result
-        score_cum += score
-
-        num_leaves_cum += num_leaves
-
-        print(f"{score}/{num_leaves} leaves detected, IOU average: {iou_result:.4f} : {name}")
-
-        # get the average leaf area
-        av_area = leaf_area(pred, n=n)
-
-        print(f"Average leaf area: {av_area:.1f} Px")
-        print()
-
-        # Calculate the leaf cupping
-        mono_depth = load_mono_depth(name, MONOCULAR_DEPTH_DIR, MONO_DEPTH_TYPE)
-
-        cupping_av, cupping_scores, curvature_scores = leaf_cupping_mono(pred, mono_depth, curvature_bins, cupping_bins, n, image=image, display=show)
-        
-        # savoyness_mean, savoyness_scores = savoyness_depth(pred, mono_depth, n=n, display=True, image=image)
-        savoyness_mean, savoyness_scores = savoyness(pred, image, n=n, display=True)
-
-        cup_scores.extend(cupping_scores)
-        curve_scores.extend(curvature_scores)
-
-
-    n_images = len(image_names)
-    overall_accuracy = score_cum / num_leaves_cum
-    overall_iou = (iou_cum / n_images)
-
-    print("OVERALL ACCURACY:", overall_accuracy)
-    print(f"OVERALL IOU SCORE: {overall_iou:.4f}")
-
-    cupping_bins = compute_bins(cup_scores, 10)
-    curve_bins = compute_bins(curve_scores, 10)
-
-    save_cupping_curvature_bins(cupping_bins, curve_bins, filepath=BINS_FILE)
+    validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,17 @@
 import numpy as np
 import cv2
 from plots import *
+from util import *
+
+from constants import *
 
 # naive approach doing this in 2D (should implement this in 3D)
 def leaf_area(leaf_masks, n=5):
 
     n = leaf_count_cap(leaf_masks, n)
+
+    if n == 0:
+        return None
 
     overall_area = 0
 
@@ -33,10 +39,13 @@ def savoyness(
     n=5,
     median_kernel=5,
     blur_sigma=8,
-    display=False
+    display=False,
 ):
 
     n = leaf_count_cap(leaf_masks, n)
+
+    if n == 0:
+        return None
 
     #
     # RGB -> LAB
@@ -91,13 +100,11 @@ def savoyness(
         )
 
         if np.count_nonzero(clean_mask) < 20:
-            scores.append(0)
             continue
 
         vals = L_med[clean_mask]
 
         if len(vals) < 20:
-            scores.append(0)
             continue
 
         #
@@ -115,7 +122,6 @@ def savoyness(
         valid_mask = clean_mask & (~artifact_mask)
 
         if np.count_nonzero(valid_mask) < 20:
-            scores.append(0)
             continue
 
         # score the savoyness based on the median of the laplacian
@@ -130,7 +136,6 @@ def savoyness(
             plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap)
 
     return np.mean(scores), scores
-
 
 
 def savoyness_depth(
@@ -160,7 +165,6 @@ def savoyness_depth(
         ys, xs = np.where(clean_mask)
 
         if len(xs) < 20:
-            scores.append(0)
             continue
 
         depth_vals = mono_depth[ys, xs]
@@ -172,7 +176,6 @@ def savoyness_depth(
         depth_vals = depth_vals[valid]
 
         if len(depth_vals) < 20:
-            scores.append(0)
             continue
 
         masked_depth = mono_depth * mask
@@ -241,6 +244,8 @@ def assign_bin(score, bins):
 def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=None, n=5, remove_outliers=False, image=None, display=False):
 
     n = leaf_count_cap(leaf_masks, n)
+    if n == 0:
+        return None
 
     cupping_cum = 0
 
@@ -258,7 +263,7 @@ def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=
         ys, xs = np.where(clean_mask)
 
         if len(xs) < 10:
-            return 0.0
+            continue
 
         zs = mono_depth[ys, xs]
 
@@ -273,7 +278,7 @@ def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=
             zs = zs[keep]
 
         if len(zs) < 10:
-            return 0.0
+            continue
         
         # fit a plane
         A = np.c_[xs, ys, np.ones_like(xs)]
@@ -311,12 +316,12 @@ def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=
             curvature_binned = None
 
         if display:
-            # print(f"Leaf cupping score: {cupping_binned}")
-            # print(f"Leaf curvature score: {curvature_binned}\n")
-            print(f"Leaf cupping score: {cupping_score}")
-            print(f"Leaf curvature score: {curvature_score}\n")
+            print(f"Leaf cupping score: {cupping_binned}")
+            print(f"Leaf curvature score: {curvature_binned}\n")
+            # print(f"Leaf cupping score: {cupping_score}")
+            # print(f"Leaf curvature score: {curvature_score}\n")
 
-            plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
+            # plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
             # plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
 
     cupping_av = cupping_cum / n

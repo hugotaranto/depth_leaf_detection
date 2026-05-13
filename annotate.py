@@ -4,18 +4,14 @@ import matplotlib.pyplot as plt
 import os
 from segment_anything import sam_model_registry, SamPredictor
 import torch
-from matplotlib.colors import ListedColormap
 
-SAM_PATH = '../../y4/sem2/comp_vision/major/detection/sam_checkpoints/sam_vit_l_0b3195.pth'
-SAM_MODEL_TYPE = 'vit_l'
-IMAGE_DIR = '../data/left'
-OUTPUT_DIR = './annotation_out'
+from constants import *
 
 def save_to_file(name, mask):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    save_path = os.path.join(OUTPUT_DIR, f"{name}")
+    os.makedirs(ANNOTATION_DIR, exist_ok=True)
+    save_path = os.path.join(ANNOTATION_DIR, f"{name}")
 
-    print(f"Saved annotations for image: {name} to {OUTPUT_DIR}")
+    print(f"Saved annotations for image: {name} to {ANNOTATION_DIR}")
 
     cv2.imwrite(save_path, mask.astype(np.uint8))
 

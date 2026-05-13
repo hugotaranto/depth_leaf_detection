@@ -9,25 +9,9 @@ import torch
 
 from plots import *
 
-IMAGE_DATA_DIR = '../data/left'
+from constants import *
 
-# DEPTH_TYPE = "DEPTH_PRO"
-# DEPTH_DATA_DIR = './mono_depths/depth_pro'
-
-DEPTH_TYPE = "MARIGOLD"
-DEPTH_DATA_DIR = './mono_depths/marigold'
-
-DEPTH_PRO_DATA_DIR = "./mono_depths/depth_pro"
-
-DOWNSAMPLE_SIZE = 256
-
-# base SAM model
-SAM_MODEL_TYPE = 'vit_l'
-# SAM_MODEL_PATH = './sam_base_checkpoint.pth'
-SAM_MODEL_PATH = './sam_checkpoints/sam_vit_l_0b3195.pth'
-
-OUTPUT_DIR = "./detection_out/test"
-
+DBSCAN_DOWNSAMPLE_SIZE = 256
 CIRCULARITY_THRESHOLD = 0.75
 
 # load the data into a dictionary
@@ -70,7 +54,7 @@ def load_data(image_dir, depth_dir):
             raise RuntimeError(f"Depth type: {DEPTH_TYPE} no supported")
 
         depth_pro_name = f"{base_name}.npz"
-        depth_pro_path = os.path.join(DEPTH_PRO_DATA_DIR, depth_pro_name)
+        depth_pro_path = os.path.join(DEPTH_PRO_DIR, depth_pro_name)
 
         depth_pro_map = np.load(depth_pro_path)["depth"].astype(np.float32)
 
@@ -123,8 +107,8 @@ def get_dbscan_centroids(points, labels):
 def dbscan(depth_map, image, show=False):
     
     # resize the image -- DBSCAN struggles with native 1900 * 1900
-    resized = cv2.resize(depth_map, (DOWNSAMPLE_SIZE, DOWNSAMPLE_SIZE))
-    resized_image = cv2.resize(image, (DOWNSAMPLE_SIZE, DOWNSAMPLE_SIZE))
+    resized = cv2.resize(depth_map, (DBSCAN_DOWNSAMPLE_SIZE, DBSCAN_DOWNSAMPLE_SIZE))
+    resized_image = cv2.resize(image, (DBSCAN_DOWNSAMPLE_SIZE, DBSCAN_DOWNSAMPLE_SIZE))
 
     # kmeans to separate plant from soil based on colour
     # mask = get_foreground_mask_colour(resized_image)
@@ -479,10 +463,13 @@ def filter_small_leaves(segmented_mask, leaf_segmentations, keep_fraction=0.5, m
 
 
 def main():
-    data = load_data(IMAGE_DATA_DIR, DEPTH_DATA_DIR)
+    if DEPTH_TYPE == "MARIGOLD":
+        data = load_data(IMAGE_DIR, MARIGOLD_DIR)
+    else:
+        data = load_data(IMAGE_DIR, DEPTH_PRO_DIR)
 
     # load the sam predictor
-    sam_predictor = load_sam(SAM_MODEL_PATH, SAM_MODEL_TYPE) 
+    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE) 
 
     show = False
 
@@ -500,7 +487,7 @@ def main():
 
         centroids = dbscan(depth_map, image, show=show)
         if len(centroids) == 0:
-            save_segmentation_mask(None, None, name, OUTPUT_DIR, h, w)
+            save_segmentation_mask(None, None, name, DETECTION_OUTPUT, h, w)
             continue
 
         segmented_mask, leaf_segmentations = segment_with_sam(image, centroids, sam_predictor)
@@ -526,7 +513,7 @@ def main():
 
         # visualise_top_leaves(image, leaf_segmentations, scores, n=5)
 
-        save_segmentation_mask(segmented_mask, scores, name, OUTPUT_DIR, h, w)
+        save_segmentation_mask(segmented_mask, scores, name, DETECTION_OUTPUT, h, w)
 
 
 if __name__ == "__main__":
