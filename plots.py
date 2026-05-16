@@ -1110,3 +1110,177 @@ def plot_leaf_score_distributions(
     plt.legend()
 
     plt.show()
+
+
+def visualise_leaf_pairing(
+    depth_map,
+    mask,
+    inner_border,
+    outer_ring,
+    inner_point,
+    outer_point,
+    score,
+    padding=200,
+    figsize=(8, 8),
+):
+    """
+    Visualise one inner-border ↔ outer-ring comparison.
+
+    Colors:
+    - green = leaf mask
+    - red   = inner border
+    - blue  = outer ring
+
+    Markers:
+    - yellow = selected inner point
+    - cyan   = matched outer point
+    """
+
+    #
+    # Crop bounds
+    #
+
+    ys, xs = np.where(mask > 0)
+
+    if len(ys) == 0:
+        print("Empty mask")
+        return
+
+    y0 = max(0, ys.min() - padding)
+    y1 = min(depth_map.shape[0], ys.max() + padding)
+
+    x0 = max(0, xs.min() - padding)
+    x1 = min(depth_map.shape[1], xs.max() + padding)
+
+    #
+    # Crop maps
+    #
+
+    depth_crop = depth_map[y0:y1, x0:x1]
+
+    mask_crop = mask[y0:y1, x0:x1]
+    inner_crop = inner_border[y0:y1, x0:x1]
+    outer_crop = outer_ring[y0:y1, x0:x1]
+
+    #
+    # Normalise depth
+    #
+
+    depth_vis = depth_crop.astype(np.float32).copy()
+
+    valid = np.isfinite(depth_vis)
+
+    if np.any(valid):
+
+        dmin = np.min(depth_vis[valid])
+        dmax = np.max(depth_vis[valid])
+
+        if dmax > dmin:
+
+            depth_vis[valid] = (
+                (depth_vis[valid] - dmin)
+                / (dmax - dmin)
+            )
+
+    #
+    # RGB image
+    #
+
+    rgb = np.stack(
+        [depth_vis] * 3,
+        axis=-1
+    )
+
+    #
+    # Overlay masks
+    #
+
+    rgb[mask_crop.astype(bool)] = [0.0, 1.0, 0.0]
+    rgb[outer_crop.astype(bool)] = [0.0, 0.0, 1.0]
+    rgb[inner_crop.astype(bool)] = [1.0, 0.0, 0.0]
+
+    #
+    # Convert points into crop coordinates
+    #
+
+    iy, ix = inner_point
+    oy, ox = outer_point
+
+    iy_c = iy - y0
+    ix_c = ix - x0
+
+    oy_c = oy - y0
+    ox_c = ox - x0
+
+    #
+    # Plot
+    #
+
+    plt.figure(figsize=figsize)
+
+    plt.imshow(rgb)
+
+    #
+    # connection line
+    #
+
+    plt.plot(
+        [ix_c, ox_c],
+        [iy_c, oy_c],
+        linewidth=2
+    )
+
+    #
+    # inner point
+    #
+
+    plt.scatter(
+        ix_c,
+        iy_c,
+        s=120,
+        marker='o',
+        edgecolors='black',
+        linewidths=2,
+        label='Inner Border'
+    )
+
+    #
+    # outer point
+    #
+
+    plt.scatter(
+        ox_c,
+        oy_c,
+        s=120,
+        marker='x',
+        linewidths=3,
+        label='Outer Ring'
+    )
+
+    plt.title(
+        f"Depth Difference: {score:.4f}"
+    )
+
+    plt.legend()
+
+    plt.axis("off")
+
+    plt.show()
+
+    #
+    # Print info
+    #
+
+    print("INNER POINT:")
+    print(f"  y={iy}, x={ix}")
+    print(f"  depth={depth_map[iy, ix]:.4f}")
+
+    print()
+
+    print("OUTER POINT:")
+    print(f"  y={oy}, x={ox}")
+    print(f"  depth={depth_map[oy, ox]:.4f}")
+
+    print()
+
+    print(f"DIFFERENCE: {score:.4f}")

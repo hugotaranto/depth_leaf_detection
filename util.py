@@ -8,6 +8,13 @@ def load_image(name, image_dir):
     image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     return image
 
+def load_std_depth(name, dir):
+    base_name = os.path.splitext(name)[0]
+    depth_path = os.path.join(dir, f"{base_name}.npy")
+    depth = np.load(depth_path)
+
+    return depth
+
 def load_depth(name, depth_dir, depth_type):
 
     name = os.path.splitext(name)[0]

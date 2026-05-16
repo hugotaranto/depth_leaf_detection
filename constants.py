@@ -1,6 +1,7 @@
+from depth_pro.depth_pro import DepthProConfig
 # Image directory
-# IMAGE_DIR = "../data/left"
-IMAGE_DIR = "./data/images"
+IMAGE_DIR = "../data/left"
+# IMAGE_DIR = "./data/images"
 
 # manual annotation directory
 ANNOTATION_DIR = "./data/annotation_out"
@@ -15,6 +16,16 @@ DEPTH_TYPE = "MARIGOLD"
 
 DEPTH_PRO_DIR = "./data/mono_depths/depth_pro"
 MARIGOLD_DIR = "./data/mono_depths/marigold"
+
+# depth pro config
+DEPTH_PRO_CONFIG = DepthProConfig(
+    patch_encoder_preset="dinov2l16_384",
+    image_encoder_preset="dinov2l16_384",
+    checkpoint_uri="./dependencies/ml-depth-pro/checkpoints/depth_pro.pt",
+    decoder_features=256,
+    use_fov_head=True,
+    fov_encoder_preset="dinov2l16_384",
+)
 
 # leaf detection output
 DETECTION_OUTPUT = "./data/detection_out"

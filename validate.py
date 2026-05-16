@@ -11,6 +11,7 @@ from sklearn.metrics import mean_absolute_error
 
 from dataclasses import dataclass, field
 
+SAVOYNESS_TYPE = "RGB"
 DISPLAY = False
 NUM_LEAVES = 5
 
@@ -91,6 +92,8 @@ def validate_predictions(gt, pred, n=5, overlap_thresh=0.5, show=False, image=No
 
     num_leaves = len(np.unique(pred)) - 1 
     n = min(n, num_leaves)
+    if n == 0:
+        return 0, 0, []
 
     score = 0
     iou_results = []
@@ -348,7 +351,7 @@ def fit_bins(scores, labels, n_classes=9):
     return np.array(bins)
 
 
-def eval_images(names, n_leaves):
+def eval_images(names, n_leaves, savoyness_type="RGB", display=False):
     eval = Evaluation()
 
     for name in names:
@@ -364,13 +367,18 @@ def eval_images(names, n_leaves):
         depth = load_depth(name, depth_dir, DEPTH_TYPE)
         savoyness_gt, cupping_gt = load_eval_scores(name, DATABASE)
 
-        cupping_res = leaf_cupping_mono(detections, depth, curvature_bins=None, cupping_bins=None, n=n_leaves, image=image, display=False)
+        # print(f"Savoyness ground truth: {savoyness_gt}")
+
+        cupping_res = leaf_cupping_mono(detections, depth, curvature_bins=None, cupping_bins=None, n=n_leaves, image=image, display=display)
         if cupping_res is not None:
             _, cupping_scores, _ = cupping_res
         else:
             cupping_scores = None
 
-        savoyness_res = savoyness(detections, image, n=n_leaves, display=False)
+        if savoyness_type == "RGB":
+            savoyness_res = savoyness(detections, image, n=n_leaves, display=display)
+        else:
+            savoyness_res = savoyness_depth(detections, depth, image=image, display=display)
         if savoyness_res is not None:
             _, savoyness_scores = savoyness_res
         else:
@@ -492,8 +500,8 @@ def validate_downstream_scoring(image_dir, n_leaves):
     train_names, test_names = train_test_split(valid_images, test_size=0.2, random_state=10)
 
     # build the train data
-    train_eval = eval_images(train_names, n_leaves)
-    test_eval = eval_images(test_names, n_leaves)
+    train_eval = eval_images(train_names, n_leaves, savoyness_type=SAVOYNESS_TYPE, display=DISPLAY)
+    test_eval = eval_images(test_names, n_leaves, savoyness_type=SAVOYNESS_TYPE, display=DISPLAY)
 
     results_analysis(train_eval, test_eval)
 

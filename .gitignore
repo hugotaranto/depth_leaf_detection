@@ -6,3 +6,4 @@ __pycache__
 *.npy
 samv3_out
 data
+dependencies

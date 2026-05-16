@@ -3,12 +3,10 @@ import numpy as np
 import cv2
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
-
 from segment_anything import sam_model_registry, SamPredictor
 import torch
 
 from plots import *
-
 from constants import *
 
 DBSCAN_DOWNSAMPLE_SIZE = 256
@@ -339,6 +337,7 @@ def score_leaves(
         #
 
         score_cum = 0
+        scores_rec = []
 
         for y, x in inner_coords:
 
@@ -355,18 +354,17 @@ def score_leaves(
             dist2 = dy * dy + dx * dx
 
             nearest_idx = np.argmin(dist2)
-
             outer_depth = outer_depth_values[nearest_idx]
 
             # score for the occlusion
-            score_cum += outer_depth - border_depth
+            score = outer_depth - border_depth
+            score_cum += score
+            scores_rec.append(score)
 
         if num_checked == 0:
             scores.append(0)
         else:
-            scores.append(
-                score_cum / num_checked
-            )
+            scores.append(np.percentile(scores_rec, 75))
 
     return scores
 
@@ -486,6 +484,11 @@ def main():
         print(f"Processing image {name}")
 
         centroids = dbscan(depth_map, image, show=show)
+        #
+        # print(f"Processing with depth pro")
+
+        # centroids = dbscan(depth_pro, image, show=show)
+
         if len(centroids) == 0:
             save_segmentation_mask(None, None, name, DETECTION_OUTPUT, h, w)
             continue
@@ -502,7 +505,7 @@ def main():
             plot_segmentation_mask(image, segmented_mask)
         # plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_pro, leaf_segmentations)
+        scores = score_leaves(depth_map, leaf_segmentations)
 
         # ranked_leaves, scores = get_top_n_leaves(leaf_segmentations, scores)
         # print(scores)
