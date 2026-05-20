@@ -11,7 +11,10 @@ bash install.sh
 
 Download the model checkpoints from: https://github.com/facebookresearch/segment-anything#model-checkpoints
 
-
-
 - ml-depth-pro (https://github.com/apple/ml-depth-pro)
+
+- Marigold (https://github.com/prs-eth/marigold)
+
+Download the checkpoint from: https://huggingface.co/prs-eth/marigold-depth-v1-1/tree/main
+
 

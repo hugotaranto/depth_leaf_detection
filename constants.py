@@ -1,7 +1,7 @@
 from depth_pro.depth_pro import DepthProConfig
 # Image directory
-IMAGE_DIR = "../data/left"
-# IMAGE_DIR = "./data/images"
+# IMAGE_DIR = "../data/left"
+IMAGE_DIR = "./data/images"
 
 # manual annotation directory
 ANNOTATION_DIR = "./data/annotation_out"
@@ -12,7 +12,6 @@ SAM_MODEL_TYPE = "vit_l"
 
 # Monocular depth estimation data
 # depth type to be used in detection
-DEPTH_TYPE = "MARIGOLD"
 
 DEPTH_PRO_DIR = "./data/mono_depths/depth_pro"
 MARIGOLD_DIR = "./data/mono_depths/marigold"
@@ -35,5 +34,9 @@ DOWNSTREAM_DEPTH_TYPE = "DEPTH_PRO"
 
 # downstream bins for scoring
 BINS_FILE = "./bins.npz"
-DATABASE = "./data/dataset.csv"
+# DATABASE = "./data/dataset.csv"
+DATABASE = "./data/Trial 26.csv"
+
+SAVOYNESS_EVAL_METHOD = "LAPLACE"   # can be: DEPTH, LAPLACE
+CUPPING_EVAL_METHOD = "QUADRATIC"   # can be: QUADRATIC, PLANE
 

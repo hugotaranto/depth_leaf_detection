@@ -5,60 +5,16 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from segment_anything import sam_model_registry, SamPredictor
 import torch
+import sys
 
 from plots import *
 from constants import *
+from util import *
 
 DBSCAN_DOWNSAMPLE_SIZE = 256
 CIRCULARITY_THRESHOLD = 0.75
 
-# load the data into a dictionary
-def load_data(image_dir, depth_dir):
-
-    # get all of the image names
-    image_names = os.listdir(image_dir)
-
-    image_depth_pairs = []
-
-    for name in image_names:
-        base_name = os.path.splitext(name)[0] # take the .png off
-
-        if DEPTH_TYPE == "MARIGOLD":
-            # construct the depth name
-            depth_name = f"{base_name}_depth.npy"
-        elif DEPTH_TYPE == "DEPTH_PRO":
-            depth_name = f"{base_name}.npz"
-
-        else:
-            raise RuntimeError(f"Depth type: {DEPTH_TYPE} no supported")
-
-        # create the full paths
-        image_path = os.path.join(image_dir, name)
-        depth_path = os.path.join(depth_dir, depth_name)
-
-        if not os.path.exists(depth_path):
-            print(f"Could not find depth corresponding depth file: {depth_path}")
-            continue
-
-        # load the image and depth map
-        image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-
-        if DEPTH_TYPE == "MARIGOLD":
-            depth = np.load(depth_path).astype(np.float32)
-        elif DEPTH_TYPE == "DEPTH_PRO":
-            depth = np.load(depth_path)
-            depth = depth["depth"].astype(np.float32)
-        else:
-            raise RuntimeError(f"Depth type: {DEPTH_TYPE} no supported")
-
-        depth_pro_name = f"{base_name}.npz"
-        depth_pro_path = os.path.join(DEPTH_PRO_DIR, depth_pro_name)
-
-        depth_pro_map = np.load(depth_pro_path)["depth"].astype(np.float32)
-
-        image_depth_pairs.append((image, depth, name, depth_pro_map))
-
-    return image_depth_pairs
+DISPLAY = False
 
 def get_foreground_mask_thresh(image):
 
@@ -364,7 +320,7 @@ def score_leaves(
         if num_checked == 0:
             scores.append(0)
         else:
-            scores.append(np.percentile(scores_rec, 75))
+            scores.append(score_cum / num_checked)
 
     return scores
 
@@ -459,65 +415,79 @@ def filter_small_leaves(segmented_mask, leaf_segmentations, keep_fraction=0.5, m
 
     return new_mask, filtered
 
+def detect_dir(dir, sam_predictor, save_dir=None):
 
-def main():
-    if DEPTH_TYPE == "MARIGOLD":
-        data = load_data(IMAGE_DIR, MARIGOLD_DIR)
-    else:
-        data = load_data(IMAGE_DIR, DEPTH_PRO_DIR)
+    segmentations = {}
 
-    # load the sam predictor
-    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE) 
+    images = os.listdir(dir)
 
-    show = False
+    # load each image
+    for name in images:
+        image = load_image(name, dir)
+        sys.stdout.write(f"Detecting leaves in image: {name}\r")
 
-    # for pair in data:
-    for i in range(len(data)):
-
-        image = data[i][0]
-        depth_map = data[i][1]
-        name = data[i][2]
-        depth_pro = data[i][3]
+        marigold_depth = load_std_depth(name, MARIGOLD_DIR)
+        depth_pro_depth = load_std_depth(name, DEPTH_PRO_DIR)
 
         h, w = image.shape[:2]
 
-        print(f"Processing image {name}")
-
-        centroids = dbscan(depth_map, image, show=show)
-        #
-        # print(f"Processing with depth pro")
-
-        # centroids = dbscan(depth_pro, image, show=show)
+        centroids = dbscan(marigold_depth, image, show=DISPLAY)
 
         if len(centroids) == 0:
-            save_segmentation_mask(None, None, name, DETECTION_OUTPUT, h, w)
+            if save_dir is not None:
+                save_segmentation_mask(None, None, name, save_dir, h, w)
             continue
 
         segmented_mask, leaf_segmentations = segment_with_sam(image, centroids, sam_predictor)
-
-        # plot_segmentation_mask(image, segmented_mask)
-
         segmented_mask, leaf_segmentations = filter_small_leaves(segmented_mask, leaf_segmentations)
 
-        # plot_segmentation_mask(image, segmented_mask)
-
-        if show:
+        if DISPLAY:
             plot_segmentation_mask(image, segmented_mask)
-        # plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_map, leaf_segmentations)
+        scores = score_leaves(depth_pro_depth, leaf_segmentations)
 
-        # ranked_leaves, scores = get_top_n_leaves(leaf_segmentations, scores)
-        # print(scores)
-        # visualise_top_leaves(image, leaf_segmentations, scores, n=5)
-
-        if show:
+        if DISPLAY:
             visualise_top_leaves(image, leaf_segmentations, scores, n=5)
 
-        # visualise_top_leaves(image, leaf_segmentations, scores, n=5)
+        if save_dir is not None:
+            save_segmentation_mask(segmented_mask, scores, name, save_dir, h, w)
 
-        save_segmentation_mask(segmented_mask, scores, name, DETECTION_OUTPUT, h, w)
+        # segmentations.append(segmented_mask)
+        segmentations[name] = segmented_mask
 
+    return segmentations
+
+def detect_plot(plot_dir, sam_predictor, save_dir=None):
+
+    cams = os.listdir(plot_dir)
+
+    segmentations = {}
+
+    for cam in cams:
+        cam_path = os.path.join(plot_dir, cam)
+        cam_masks = detect_dir(cam_path, sam_predictor, save_dir=save_dir)
+
+        segmentations = segmentations | cam_masks
+
+    return segmentations
+
+def main():
+
+    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
+
+    plots = os.listdir(IMAGE_DIR)
+    total = len(plots)
+    count = 0
+
+    for plot in plots:
+        count += 1
+        print(f"\nDetecting leaves in plot: {plot}, {count}/{total}")
+        plot_dir = os.path.join(IMAGE_DIR, plot)
+        segmentation_masks = detect_plot(plot_dir, sam_predictor, save_dir=DETECTION_OUTPUT)
 
 if __name__ == "__main__":
     main()
+    # sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
+
+    # segmentation_masks = detect_plot(IMAGE_DIR, sam_predictor, save_dir=DETECTION_OUTPUT)
+    # segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)

@@ -135,7 +135,8 @@ def savoyness(
             print(f"Leaf {label} savoyness: {score:.4f}")
             plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap)
 
-    return np.mean(scores), scores
+    # return np.mean(scores), scores
+    return scores
 
 
 def savoyness_depth(
@@ -235,22 +236,27 @@ def savoyness_depth(
             print(f"Savoyness: {score:.4f}")
             plot_leaf_savoyness(xs, ys, zs, smooth_zs, residuals, image=image, mask=mask)
 
-    return np.mean(scores), scores
+    # return np.mean(scores), scores
+    return scores
 
 def assign_bin(score, bins):
     idx = np.digitize(score, bins, right=True)
     return max(1, min(idx, len(bins) - 1))
 
-def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=None, n=5, remove_outliers=False, image=None, display=False):
+def leaf_cupping_mono(leaf_masks, mono_depth, eval="QUADRATIC", n=5, remove_outliers=False, image=None, display=False):
+
+    if eval not in ["PLANE", "QUADRATIC"]:
+        raise ValueError(f"Unsupported Cupping Method: {CUPPING_EVAL_METHOD}")
 
     n = leaf_count_cap(leaf_masks, n)
     if n == 0:
         return None
 
-    cupping_cum = 0
-
-    cupping_scores = []
-    curvature_scores = []
+    # cupping_cum = 0
+    #
+    # cupping_scores = []
+    # curvature_scores = []
+    scores = []
 
     for label in range(1, n+1):
 
@@ -280,54 +286,39 @@ def leaf_cupping_mono(leaf_masks, mono_depth, curvature_bins=None, cupping_bins=
         if len(zs) < 10:
             continue
         
-        # fit a plane
-        A = np.c_[xs, ys, np.ones_like(xs)]
-        coeffs, _, _, _ = np.linalg.lstsq(A, zs, rcond=None)
-        a, b, c = coeffs
+        if eval == "PLANE":
+            # fit a plane
+            A = np.c_[xs, ys, np.ones_like(xs)]
+            coeffs, _, _, _ = np.linalg.lstsq(A, zs, rcond=None)
+            a, b, c = coeffs
 
-        z_plane = a * xs + b * ys + c
+            z_plane = a * xs + b * ys + c
 
-        # get the residuals from the plane:
-        residuals = zs - z_plane
+            # get the residuals from the plane:
+            residuals = zs - z_plane
 
-        # calculate the score
-        cupping_score = np.std(residuals)
+            # calculate the score
+            score = np.std(residuals)
+            scores.append(score)
+            if display:
+                plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
+                print(f"Leaf {eval} score: {score}")
 
-        # calculate the curvature score:
-        A_quad = np.c_[xs**2, ys**2, xs*ys, xs, ys, np.ones_like(xs)]
-        coeffs_quad, _, _, _ = np.linalg.lstsq(A_quad, zs, rcond=None)
-
-        qa, qb, qc, qd, qe, qf = coeffs_quad
-        curvature_score = np.sqrt(qa**2 + qb**2 + qc**2)
-
-        cupping_cum += cupping_score
-
-        cupping_scores.append(cupping_score)
-        curvature_scores.append(curvature_score)
-
-        if cupping_bins is not None:
-            cupping_binned = assign_bin(cupping_score, cupping_bins)
         else:
-            cupping_binned = None
 
-        if curvature_bins is not None:
-            curvature_binned = assign_bin(curvature_score, curvature_bins)
-        else:
-            curvature_binned = None
+            # calculate the curvature score:
+            A_quad = np.c_[xs**2, ys**2, xs*ys, xs, ys, np.ones_like(xs)]
+            coeffs_quad, _, _, _ = np.linalg.lstsq(A_quad, zs, rcond=None)
 
-        if display:
-            print(f"Leaf cupping score: {cupping_binned}")
-            print(f"Leaf curvature score: {curvature_binned}\n")
-            # print(f"Leaf cupping score: {cupping_score}")
-            # print(f"Leaf curvature score: {curvature_score}\n")
+            qa, qb, qc, qd, qe, qf = coeffs_quad
+            score = np.sqrt(qa**2 + qb**2 + qc**2)
 
-            # plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
-            # plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
+            scores.append(score)
+            if display:
+                plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
+                print(f"Leaf {eval} score: {score}")
 
-    cupping_av = cupping_cum / n
-
-    return cupping_av, cupping_scores, curvature_scores
-
+    return scores
 
 def erode_mask(mask, kernel_size=3, iterations=1):
     kernel = np.ones((kernel_size, kernel_size), np.uint8)

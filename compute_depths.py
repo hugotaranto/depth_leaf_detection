@@ -4,9 +4,126 @@ import depth_pro as dp
 import torch
 import os
 from util import *
+from PIL import Image
 import sys
 
-from constants import DEPTH_PRO_CONFIG
+from dependencies.Marigold.marigold import MarigoldDepthPipeline
+
+from constants import *
+
+
+class MarigoldDepthEstimator:
+
+    def __init__(
+        self,
+        checkpoint="./dependencies/Marigold/marigold-depth-v1-1",
+        half_precision=True,
+        device=None,
+    ):
+
+        # choose device
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self.device = device
+
+        # dtype
+        if half_precision and device == "cuda":
+            dtype = torch.float16
+            variant = "fp16"
+        else:
+            dtype = torch.float32
+            variant = None
+
+        # load model
+        self.pipe = MarigoldDepthPipeline.from_pretrained(
+            checkpoint,
+            variant=variant,
+            torch_dtype=dtype,
+        )
+
+        self.pipe = self.pipe.to(device)
+
+        # optional memory optimisation
+        try:
+            self.pipe.enable_xformers_memory_efficient_attention()
+        except Exception:
+            pass
+
+    def predict(
+        self,
+        image,
+        denoise_steps=None,
+        ensemble_size=1,
+        processing_res=None,
+        match_input_res=True,
+        batch_size=0,
+        color_map="Spectral",
+        seed=None,
+    ):
+
+        # convert input to PIL
+        if isinstance(image, str):
+            image = Image.open(image)
+
+        elif isinstance(image, np.ndarray):
+            image = Image.fromarray(image)
+
+        # RNG
+        if seed is None:
+            generator = None
+        else:
+            generator = torch.Generator(device=self.device)
+            generator.manual_seed(seed)
+
+        with torch.no_grad():
+
+            output = self.pipe(
+                image,
+                denoising_steps=denoise_steps,
+                ensemble_size=ensemble_size,
+                processing_res=processing_res,
+                match_input_res=match_input_res,
+                batch_size=batch_size,
+                color_map=color_map,
+                show_progress_bar=True,
+                generator=generator,
+            )
+
+        return output.depth_np
+
+def marigold_predict_directory(model:MarigoldDepthEstimator, directory, save_path=None):
+    
+    image_names = os.listdir(directory)
+    depths = []
+    depth = None
+
+    for name in image_names:
+
+        base_name = os.path.splitext(name)[0]
+        if save_path is not None:
+            os.makedirs(save_path, exist_ok=True)
+            saved = os.listdir(save_path)
+
+            if f"{base_name}.npy" in saved:
+                # load it
+                depth = load_std_depth(name, save_path)
+                depths.append(depth)
+                continue
+
+        # otherwise compute it
+        sys.stdout.write(f"Predicting image: {name}\r")
+        image_path = os.path.join(directory, name)
+        depth = model.predict(image_path)
+
+        if save_path is not None:
+            out_file = os.path.join(save_path, f"{base_name}.npy")
+            np.save(out_file, depth)
+
+        depths.append(depth)
+
+    return np.array(depths)
+
 
 def load_depth_pro(config=None):
 
@@ -30,45 +147,45 @@ def depth_pro_predict(directory, model, transform, save_path=None):
     for name in image_names:
 
         base_name = os.path.splitext(name)[0]
-        saved = os.listdir(save_path)
-        # check if the depth has already been calculated
+        if save_path is not None:
+            os.makedirs(save_path, exist_ok=True)
+            saved = os.listdir(save_path)
 
-        if save_path is not None and f"{base_name}.npy" in saved:
-            # load it
-            depth = load_std_depth(name, save_path)
+            # check if the depth has already been calculated
+            if f"{base_name}.npy" in saved:
+                # load it
+                depth = load_std_depth(name, save_path)
+                depths.append(depth)
+                continue
 
         # otherwise compute it
-        else:
-            sys.stdout.write(f"Predicting image: {name}\r")
-            # image = load_image(name, directory)
-            image_path = os.path.join(directory, name)
-            image, _, f_px = dp.load_rgb(image_path)
+        sys.stdout.write(f"Predicting image: {name}\r")
+        # image = load_image(name, directory)
+        image_path = os.path.join(directory, name)
+        image, _, f_px = dp.load_rgb(image_path)
 
-            image_t = transform(image)
+        image_t = transform(image)
 
-            torch.cuda.reset_peak_memory_stats()
-            prediction = model.infer(image_t, f_px=f_px)
-            depth_tensor = prediction["depth"]
+        torch.cuda.reset_peak_memory_stats()
+        prediction = model.infer(image_t, f_px=f_px)
+        depth_tensor = prediction["depth"]
 
-            depth = depth_tensor.detach().cpu().numpy()
+        depth = depth_tensor.detach().cpu().numpy().squeeze()
 
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
 
-            if save_path is not None:
-                # save the depth map to the save directory as a .npy
-                os.makedirs(save_path, exist_ok=True)
-                out_file = os.path.join(save_path, f"{base_name}.npy")
-                np.save(out_file, depth)
+        if save_path is not None:
+            # save the depth map to the save directory as a .npy
+            os.makedirs(save_path, exist_ok=True)
+            out_file = os.path.join(save_path, f"{base_name}.npy")
+            np.save(out_file, depth)
 
         depths.append(depth)
 
     return np.array(depths)
 
-def marigold_predict():
-    pass
 
-
-def main():
+def depth_pro_main():
 
     image_dir = "./data/images_full"
     save_dir = "./data/mono_depths/depth_pro/full"
@@ -92,5 +209,52 @@ def main():
             # make the predictions
             depths = depth_pro_predict(cam_path, dp_model, dp_transform, save_dir)
 
+def marigold_main():
+    image_dir = "./data/images_full"
+    save_dir = "./data/mono_depths/marigold/full"
+
+    marigold_model = MarigoldDepthEstimator()
+
+    count = 0
+    plots = os.listdir(image_dir)
+    total = len(plots)
+
+    for plot in plots:
+        count += 1
+        print(f"\nWorking on plot {plot}, {count}/{total}")
+
+        plot_dir = os.path.join(image_dir, plot)
+        cams = os.listdir(plot_dir)
+
+        for cam in cams:
+            cam_path = os.path.join(plot_dir, cam)
+
+            # make the predictions
+            depths = marigold_predict_directory(marigold_model, cam_path, save_dir)
+
+
 if __name__ == "__main__":
-    main()
+    # depth_pro_main()
+    # marigold_main()
+
+    save_dir = "./data/mono_depths/depth_pro/full"
+
+    dp_model, dp_transform = load_depth_pro(config=DEPTH_PRO_CONFIG)
+
+    cams = os.listdir(IMAGE_DIR)
+
+    for cam in cams:
+        cam_path = os.path.join(IMAGE_DIR, cam)
+
+        depths = depth_pro_predict(cam_path, dp_model, dp_transform, save_dir)
+
+
+    save_dir = "./data/mono_depths/marigold/full"
+
+    marigold_model = MarigoldDepthEstimator()
+
+    cams = os.listdir(IMAGE_DIR)
+
+    for cam in cams:
+        cam_path = os.path.join(IMAGE_DIR, cam)
+        depths = marigold_predict_directory(marigold_model, cam_path, save_dir)

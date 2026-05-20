@@ -18,7 +18,22 @@ cd ml-depth-pro
 
 pip install -e .
 
-source get_pretrained_models.sh
+if [ ! -f "checkpoints/depth_pro.pt" ]; then
+  source get_pretrained_models.sh
+fi
+
+cd ..
+
+# Install marigold
+
+if [ ! -d "Marigold" ]; then
+    git clone https://github.com/prs-eth/Marigold.git
+fi
+
+cd Marigold
+
+# pip install -r requirements.txt
+pip install -e .
 
 cd ../..
 
