@@ -37,6 +37,8 @@ BINS_FILE = "./bins.npz"
 # DATABASE = "./data/dataset.csv"
 DATABASE = "./data/Trial 26.csv"
 
-SAVOYNESS_EVAL_METHOD = "LAPLACE"   # can be: DEPTH, LAPLACE
+SAVOYNESS_EVAL_METHOD = "FFT"       # can be: DEPTH, LAPLACE, FFT
 CUPPING_EVAL_METHOD = "QUADRATIC"   # can be: QUADRATIC, PLANE
+
+SAVED_SAVOYNESS_SCORES = "savoyness.pkl"
 

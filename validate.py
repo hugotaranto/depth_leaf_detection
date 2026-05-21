@@ -2,39 +2,21 @@ import numpy as np
 import os
 import cv2
 from plots import *
-from downstream import savoyness, savoyness_depth, leaf_cupping_mono, leaf_area
+from downstream import savoyness, savoyness_depth, leaf_cupping_mono, leaf_area, savoyness_fft
 from constants import *
 from util import *
 
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 
 from dataclasses import dataclass, field
 from collections import defaultdict
 import random
 import sys
+import pickle
 
 SAVOYNESS_TYPE = "RGB"
 DISPLAY = False
 NUM_LEAVES = 5
-
-@dataclass
-class Evaluation:
-    savoy_scores: list = field(default_factory=list)
-    savoy_means: list = field(default_factory=list)
-    savoy_medians: list = field(default_factory=list)
-    savoy_scores_list: list = field(default_factory=list)
-
-    savoy_labels: list = field(default_factory=list)
-    savoy_image_labels: list = field(default_factory=list)
-
-    cup_scores: list = field(default_factory=list)
-    cup_means: list = field(default_factory=list)
-    cup_medians: list = field(default_factory=list)
-    cup_scores_list: list = field(default_factory=list)
-
-    cup_labels: list = field(default_factory=list)
-    cup_image_labels: list = field(default_factory=list)
 
 @dataclass
 class PlotEvaluation:
@@ -332,24 +314,34 @@ def fit_bins(scores, labels, n_classes=9):
         else:
             class_means.append(np.median(vals))
 
-    class_means = np.array(class_means)
-
-    #
-    # interpolate missing classes
-    #
+    class_means = np.array(class_means, dtype=np.float32)
 
     valid = np.isfinite(class_means)
 
-    class_means = np.interp(
-        np.arange(len(class_means)),
-        np.where(valid)[0],
+    valid_idx = np.where(valid)[0]
+
+    #
+    # ONLY fill missing classes
+    #
+
+    missing_idx = np.where(~valid)[0]
+
+    interpolated = np.interp(
+        missing_idx,
+        valid_idx,
         class_means[valid]
     )
+
+    class_means[missing_idx] = interpolated
+
+    #
+    # optional monotonic enforcement
+    #
 
     class_means = np.maximum.accumulate(class_means)
 
     #
-    # thresholds between classes
+    # bins
     #
 
     bins = []
@@ -413,6 +405,9 @@ def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=
                     elif SAVOYNESS_EVAL_METHOD == "DEPTH":
                         # use depth method
                         scores = savoyness_depth(detections, depth, n=n_leaves, display=display, image=image)
+                    elif SAVOYNESS_EVAL_METHOD == "FFT":
+                        # use fft method
+                        scores = savoyness_fft(detections, image, n=n_leaves)
                     else:
                         raise ValueError(f"Unsupported Savoyness Method: {SAVOYNESS_EVAL_METHOD}") 
 
@@ -433,136 +428,6 @@ def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=
 
     return res_scores
 
-def eval_images(names, n_leaves, savoyness_type="RGB", display=False):
-    eval = Evaluation()
-
-    for name in names:
-
-        image = load_image(name, IMAGE_DIR)
-        detections = load_image(name, DETECTION_OUTPUT)
-
-        if DOWNSTREAM_DEPTH_TYPE == "MARIGOLD":
-            depth_dir = MARIGOLD_DIR
-        else:
-            depth_dir = DEPTH_PRO_DIR
-
-        depth = load_depth(name, depth_dir, DOWNSTREAM_DEPTH_TYPE)
-        savoyness_gt, cupping_gt = load_eval_scores(name, DATABASE)
-
-        # print(f"Savoyness ground truth: {savoyness_gt}")
-
-        cupping_res = leaf_cupping_mono(detections, depth, curvature_bins=None, cupping_bins=None, n=n_leaves, image=image, display=display)
-        if cupping_res is not None:
-            _, cupping_scores, _ = cupping_res
-        else:
-            cupping_scores = None
-
-        if savoyness_type == "RGB":
-            savoyness_res = savoyness(detections, image, n=n_leaves, display=display)
-        else:
-            savoyness_res = savoyness_depth(detections, depth, image=image, display=display)
-        if savoyness_res is not None:
-            _, savoyness_scores = savoyness_res
-        else:
-            savoyness_scores = None
-
-        if savoyness_gt is not None and savoyness_scores is not None:
-            eval.savoy_scores_list.append(savoyness_scores)
-
-            eval.savoy_scores.extend(savoyness_scores)
-            eval.savoy_labels.extend([savoyness_gt] * len(savoyness_scores))
-
-            mean_savoyness = np.mean(savoyness_scores)
-            median_savoyness = np.median(savoyness_scores)
-
-            eval.savoy_means.append(mean_savoyness)
-            eval.savoy_medians.append(median_savoyness)
-
-            eval.savoy_image_labels.append(savoyness_gt)
-
-        if cupping_gt is not None and cupping_scores is not None:
-            eval.cup_scores_list.append(cupping_scores)
-
-            eval.cup_scores.extend(cupping_scores)
-            eval.cup_labels.extend([cupping_gt] * len(cupping_scores))
-
-            mean_cupping = np.mean(cupping_scores)
-            median_cupping = np.median(cupping_scores)
-
-            eval.cup_means.append(mean_cupping)
-            eval.cup_medians.append(median_cupping)
-
-            eval.cup_image_labels.append(cupping_gt)
-
-    return eval
-
-def results_analysis(train_eval, test_eval):
-    # FIT using medians
-    bins_med, results_med = evaluate_strategies(
-        train_scores=train_eval.savoy_medians,
-        train_labels=train_eval.savoy_image_labels,
-        test_leaf_scores=test_eval.savoy_scores_list,
-        test_labels=test_eval.savoy_image_labels
-    )
-    print("Fit with medians")
-    print(results_med, "\n\n")
-
-    #FIT using means
-    bins_mean, results_mean = evaluate_strategies(
-        train_scores=train_eval.savoy_means,
-        train_labels=train_eval.savoy_image_labels,
-        test_leaf_scores=test_eval.savoy_scores_list,
-        test_labels=test_eval.savoy_image_labels
-    )
-    print("Fit with means:")
-    print(results_mean, "\n\n")
-
-    # Fit using all leaves
-    bins_all, results_all = evaluate_strategies(
-        train_scores=train_eval.savoy_scores,
-        train_labels=train_eval.savoy_labels,
-        test_leaf_scores=test_eval.savoy_scores_list,
-        test_labels=test_eval.savoy_image_labels
-    )
-    print("Fit with all leaves:")
-    print(results_all)
-
-    plot_strategy_comparison(
-        results_med,
-        results_mean,
-        results_all
-    )
-
-    plot_bins(
-        train_eval.savoy_scores,
-        train_eval.savoy_labels,
-        bins_all,
-        title="Savoyness Thresholds"
-    )
-
-    preds = predict_image_scores(
-        test_eval.savoy_scores_list,
-        bins_all,
-        method="binned_mean"
-    )
-
-    plot_prediction_scatter(
-        test_eval.savoy_image_labels,
-        preds,
-        title="Savoyness Predictions"
-    )
-
-    plot_confusion(
-        test_eval.savoy_image_labels,
-        preds,
-        n_classes=9,
-        title="Savoyness Confusion Matrix"
-    )
-
-    plot_leaf_score_distributions(
-        test_eval.savoy_scores_list,
-        test_eval.savoy_image_labels
-    )
 
 def split_by_plot(plots, labels, test_ratio=0.2, seed=10):
 
@@ -652,13 +517,24 @@ def validate_downstream_scoring(image_dir, n_leaves, database_file, display=Fals
             cupping_gt.append(cupping)
 
     # compute the scores on these plots
-    savoyness_scores = compute_scores(savoyness_plots, image_dir, n_leaves=n_leaves, attribute="SAVOYNESS", display=display)
+    # load the savoyness scores from file if specified:
+    if SAVED_SAVOYNESS_SCORES is not None:
+        try:
+            with open(SAVED_SAVOYNESS_SCORES, "rb") as f:
+                savoyness_scores = pickle.load(f)
+                print(f"Loaded scores from: {SAVED_SAVOYNESS_SCORES}")
+        except:
+            savoyness_scores = compute_scores(savoyness_plots, image_dir, n_leaves=n_leaves, attribute="SAVOYNESS", display=display)
+            with open(SAVED_SAVOYNESS_SCORES, "wb") as f:
+                pickle.dump(savoyness_scores, f)
 
-
+    # otherwise just compute without saving
+    else:
+        savoyness_scores = compute_scores(savoyness_plots, image_dir, n_leaves=n_leaves, attribute="SAVOYNESS", display=display)
 
     # now we want to split into train/test given the scores.
     # this is to be done evenly given the distribution of scores
-    train_plots, train_labels, test_plots, test_labels = split_by_plot(savoyness_plots, savoyness_gt, test_ratio=0.2)
+    train_plots, train_labels, test_plots, test_labels = split_by_plot(savoyness_plots, savoyness_gt, test_ratio=0.7)
 
     train_eval = create_evaluation(train_plots, train_labels, savoyness_scores)
     test_eval = create_evaluation(test_plots, test_labels, savoyness_scores)
@@ -735,30 +611,6 @@ def results_analysis_plot(train_eval:PlotEvaluation, test_eval:PlotEvaluation):
         test_eval.plot_labels
     )
 
-
-
-# def validate_downstream_scoring(image_dir, n_leaves, database_file):
-#
-#     # get the image names
-#     image_names = os.listdir(image_dir)
-#
-#     valid_images = []
-#     for name in image_names:
-#         savoyness_gt, cupping = load_eval_scores(name, database_file)
-#
-#         if savoyness_gt is None and cupping is None:
-#             continue
-#         
-#         valid_images.append(name)
-#
-#     # split the data into train/test
-#     train_names, test_names = train_test_split(valid_images, test_size=0.2, random_state=10)
-#
-#     # build the train data
-#     train_eval = eval_images(train_names, n_leaves, savoyness_type=SAVOYNESS_TYPE, display=DISPLAY)
-#     test_eval = eval_images(test_names, n_leaves, savoyness_type=SAVOYNESS_TYPE, display=DISPLAY)
-#
-#     results_analysis(train_eval, test_eval)
 
 def validate_detection(image_dir, num_leaves):
     

@@ -10,7 +10,7 @@ def leaf_area(leaf_masks, n=5):
 
     n = leaf_count_cap(leaf_masks, n)
 
-    if n == 0:
+    if n == 0 or n == None:
         return None
 
     overall_area = 0
@@ -25,13 +25,142 @@ def leaf_area(leaf_masks, n=5):
 
     return overall_area / n
 
-def leaf_area_mono(leaf_masks, mono_depth, n=5):
-    pass
+def savoyness_fft(
+    leaf_masks,
+    image,
+    n=5,
+    median_kernel=5,
+    blur_sigma=8,
+    patch_size=64,
+    n_patches=10,
+    low_cut=4,
+    high_cut=16
+):
+    n = leaf_count_cap(leaf_masks, n)
 
+    if n == 0 or n == None:
+        return None
 
-# for this a 3D representation of the leaves is required
-def leaf_cupping_multi(leaf_masks, depth):
-    pass
+    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+
+    L = lab[:, :, 0].astype(np.float32)
+
+    #
+    # Median filter
+    #
+
+    L_med = cv2.medianBlur(
+        L.astype(np.uint8),
+        median_kernel
+    ).astype(np.float32)
+
+    #
+    # Remove low-frequency illumination
+    #
+
+    smooth = cv2.GaussianBlur(
+        L_med,
+        (0, 0),
+        sigmaX=blur_sigma,
+        sigmaY=blur_sigma
+    )
+
+    texture = L_med - smooth
+
+    half = patch_size // 2
+    scores = []
+
+    for label in range(1, n + 1):
+
+        mask = (leaf_masks == label)
+
+        # erode the mask to remove the noisy edges
+        clean_mask = erode_mask(
+            mask,
+            kernel_size=5,
+            iterations=20
+        )
+
+        #
+        # Find the patches from within the leaf
+        #
+
+        # use distance transform to find where valid centers are
+        distance = cv2.distanceTransform(
+            clean_mask.astype(np.uint8),
+            cv2.DIST_L2,
+            5
+        )
+
+        valid_mask = distance >= half
+
+        ys, xs = np.where(valid_mask)       
+
+        if len(xs) == 0:
+            continue
+
+        # randomly select the patch centers
+        num_patches = min(n_patches, len(xs))
+        idx = np.random.choice(len(xs), size=num_patches, replace=False)
+
+        patch_scores = []
+
+        for i in idx:
+
+            x = xs[i]
+            y = ys[i]
+
+            patch = texture[
+                y-half:y+half,
+                x-half:x+half
+            ]
+
+            if patch.shape[:2] != (patch_size, patch_size):
+                continue
+
+            # perform the windowing on this patch to smooth the edges
+            window_han = np.hanning(patch_size)
+
+            window = np.outer(window_han, window_han)
+            patch_windowed = patch * window
+
+            # perform the fft on this patch
+            fft = np.fft.fft2(patch_windowed)
+            fft_shift = np.fft.fftshift(fft)
+
+            magnitude = np.log1p(np.abs(fft_shift))
+
+            h_fft, w_fft = magnitude.shape
+
+            cy = h_fft // 2
+            cx = w_fft // 2
+
+            yy, xx = np.ogrid[:h_fft, :w_fft]
+
+            # Frequency radius
+            radius = np.sqrt((yy - cy)**2 + (xx - cx)**2)
+
+            freq_mask = (
+                (radius >= low_cut) &
+                (radius <= high_cut)
+            )
+
+            vals = magnitude[freq_mask]
+            total_vals = magnitude[radius >= low_cut]
+
+            if len(vals) == 0 or len(total_vals) == 0:
+                continue
+
+            band_energy = np.mean(vals)
+            total_energy = np.mean(total_vals)
+            score = band_energy / (total_energy + 1e-8)
+
+            patch_scores.append(score)
+
+        scores.append(np.median(patch_scores))
+
+    return scores
+    
 
 def savoyness(
     leaf_masks,
@@ -236,7 +365,6 @@ def savoyness_depth(
             print(f"Savoyness: {score:.4f}")
             plot_leaf_savoyness(xs, ys, zs, smooth_zs, residuals, image=image, mask=mask)
 
-    # return np.mean(scores), scores
     return scores
 
 def assign_bin(score, bins):
@@ -252,10 +380,6 @@ def leaf_cupping_mono(leaf_masks, mono_depth, eval="QUADRATIC", n=5, remove_outl
     if n == 0:
         return None
 
-    # cupping_cum = 0
-    #
-    # cupping_scores = []
-    # curvature_scores = []
     scores = []
 
     for label in range(1, n+1):
