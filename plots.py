@@ -3,6 +3,7 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 import cv2
 from sklearn.metrics import confusion_matrix
+from matplotlib.gridspec import GridSpec
 
 DPI = 100
 
@@ -12,15 +13,7 @@ def display_depth(depth, cmap="plasma"):
     plt.show()
 
 def plot_image_and_depth(image, depth, title=None, cmap="plasma"):
-    """
-    Display an RGB image and its depth map side by side.
 
-    Parameters:
-        image (np.ndarray): The RGB image (H, W, 3).
-        depth (np.ndarray): The depth map (H, W).
-        title (str, optional): Optional title for the figure.
-        cmap (str, optional): Colormap for depth visualization (default: 'plasma').
-    """
     # ensure proper types
     image = np.asarray(image)
     depth = np.asarray(depth)
@@ -50,15 +43,7 @@ def plot_image_and_depth(image, depth, title=None, cmap="plasma"):
 
 
 def plot_depth_with_clusters(depth_map, labels_2d, cluster_centroids, cmap='plasma'):
-    """
-    Plot depth map with DBSCAN clusters and centroids overlaid.
 
-    Parameters:
-        depth_map (np.ndarray): 2D depth map (H, W)
-        labels_2d (np.ndarray): 2D array of cluster labels (-1 = noise)
-        cluster_centroids (list of tuples): list of (x, y) coordinates for cluster centers
-        cmap (str): colormap for depth map
-    """
     plt.figure(figsize=(10, 8))
     
     # Show depth map
@@ -78,12 +63,7 @@ def plot_depth_with_clusters(depth_map, labels_2d, cluster_centroids, cmap='plas
 
 
 def show_dbscan_clusters(depth_map, filtered_xy, labels, image, depth, centroids, orig_centroids):
-    """
-    depth_map: 2D array (for grayscale display)
-    filtered_xy: (N, 2) array of (x, y) coords used in clustering
-    labels: DBSCAN cluster labels for each filtered point
-    image: original RGB image (for context)
-    """
+
     fig, axes = plt.subplots(1, 3, figsize=(12, 6))
 
     # --- Left: original image
@@ -170,12 +150,6 @@ def plot_segmentation_mask(image, mask):
     plt.show()
 
 def display_pred_vs_gt(image, pred, gt, alpha=0.5):
-    """
-    image: original image (H, W, 3) in RGB
-    pred: predicted mask (H, W)
-    gt: ground truth mask (H, W)
-    alpha: transparency of overlay
-    """
 
     # Ensure image is float in [0,1]
     img = image.copy().astype(np.float32)
@@ -293,11 +267,6 @@ def draw_contour_overlay(image, mask, color=(255, 0, 0), thickness=1):
     return overlay
 
 def plot_leaf_depth_3d(mask, mono_depth, downsample=1, image=None, disp_mask=None):
-    """
-    mask: (H, W) boolean
-    mono_depth: (H, W) depth map
-    image: (H, W, 3) optional
-    """
     
     if image is not None:
 
@@ -372,10 +341,6 @@ def plot_leaf_depth_3d(mask, mono_depth, downsample=1, image=None, disp_mask=Non
 
 
 def plot_leaf_from_points(xs, ys, zs, a, b, c, image=None, mask=None):
-    """
-    xs, ys, zs: leaf points
-    a, b, c: plane coefficients (z = ax + by + c)
-    """
 
     # ---- compute plane + residuals ----
     z_plane = a * xs + b * ys + c
@@ -430,8 +395,8 @@ def plot_leaf_from_points(xs, ys, zs, a, b, c, image=None, mask=None):
     ax.set_zlabel('Depth')
 
     ax.view_init(elev=65, azim=90)
-    ax.invert_yaxis()
     ax.invert_zaxis()
+    ax.invert_xaxis()
 
     ax.auto_scale_xyz(xs, ys, zs)
 
@@ -442,10 +407,6 @@ def plot_leaf_from_points(xs, ys, zs, a, b, c, image=None, mask=None):
 
 
 def plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image=None, mask=None):
-    """
-    xs, ys, zs: leaf points
-    coeffs_quad: (qa, qb, qc, qd, qe, qf)
-    """
 
     qa, qb, qc, qd, qe, qf = coeffs_quad
 
@@ -527,8 +488,8 @@ def plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image=None, mask=None):
     ax.set_zlabel('Depth')
 
     ax.view_init(elev=65, azim=90)
-    ax.invert_yaxis()
     ax.invert_zaxis()
+    ax.invert_xaxis()
 
     ax.auto_scale_xyz(xs_plot, ys_plot, zs)
 
@@ -545,14 +506,6 @@ def visualise_leaf_regions(
     padding=200,
     figsize=(8, 8),
 ):
-    """
-    Visualize cropped leaf scoring regions.
-
-    Colors:
-    - green = leaf mask
-    - red   = inner border
-    - blue  = outer ring
-    """
 
     #
     # Find crop bounds from mask
@@ -631,29 +584,12 @@ def plot_leaf_savoyness(
     image=None,
     mask=None,
 ):
-    """
-    Plot:
-    - original leaf depth surface
-    - smoothed leaf surface
-    - residual colouring (savoyness texture)
 
-    Parameters
-    ----------
-    xs, ys, zs:
-        Original leaf points
-
-    smooth_zs:
-        Smoothed depth values at leaf points
-
-    residuals:
-        zs - smooth_zs
-
-    image, mask:
-        Optional RGB image + segmentation mask
-    """
+    fig = plt.figure(figsize=(22, 8))
+    gs = GridSpec(1, 3, width_ratios=[1.0, 1.5, 1.5], figure=fig)
 
     #
-    # Layout
+    # Optional RGB crop
     #
 
     if image is not None and mask is not None:
@@ -675,102 +611,79 @@ def plot_leaf_savoyness(
 
         image_crop = image[y_min:y_max, x_min:x_max]
 
-        fig = plt.figure(figsize=(18, 8))
-
-        #
-        # image subplot
-        #
-
-        ax_img = fig.add_subplot(1, 2, 1)
+        # ax_img = fig.add_subplot(1, 3, 1)
+        ax_img = fig.add_subplot(gs[0])
 
         ax_img.imshow(image_crop)
         ax_img.set_title("Leaf")
         ax_img.axis("off")
 
-        #
-        # 3D subplot
-        #
-
-        ax = fig.add_subplot(1, 2, 2, projection='3d')
+        # ax_orig = fig.add_subplot(1, 3, 2, projection='3d')
+        ax_orig = fig.add_subplot(gs[1], projection='3d')
+        # ax_smooth = fig.add_subplot(1, 3, 3, projection='3d')
+        ax_smooth = fig.add_subplot(gs[2], projection='3d')
 
     else:
 
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111, projection='3d')
+        ax_orig = fig.add_subplot(1, 2, 1, projection='3d')
+        ax_smooth = fig.add_subplot(1, 2, 2, projection='3d')
 
     #
-    # Original leaf surface
+    # Original surface
     #
 
-    scatter = ax.scatter(
+    ax_orig.scatter(
         xs,
         ys,
         zs,
-        c=residuals,
-        cmap='coolwarm',
+        c=zs,
+        cmap='viridis',
         s=2,
-        alpha=0.9,
-        label='Original Surface'
+        alpha=0.9
     )
+
+    ax_orig.set_title("Original Depth Surface")
 
     #
     # Smoothed surface
     #
 
-    ax.scatter(
+    ax_smooth.scatter(
         xs,
         ys,
         smooth_zs,
-        c='black',
-        s=1,
-        alpha=0.15,
-        label='Smoothed Surface'
+        c=smooth_zs,
+        cmap='viridis',
+        s=2,
+        alpha=0.9
     )
 
-    #
-    # Optional connecting lines
-    # (shows residual displacement)
-    #
-
-    step = max(len(xs) // 1000, 1)
-
-    for i in range(0, len(xs), step):
-
-        ax.plot(
-            [xs[i], xs[i]],
-            [ys[i], ys[i]],
-            [smooth_zs[i], zs[i]],
-            alpha=0.08,
-            linewidth=0.5,
-            color='gray'
-        )
+    ax_smooth.set_title("Smoothed Depth Surface")
 
     #
-    # Formatting
+    # Shared formatting
     #
 
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Depth")
+    z_min = min(zs.min(), smooth_zs.min())
+    z_max = max(zs.max(), smooth_zs.max())
 
-    ax.set_title("Leaf Savoyness")
+    for ax in [ax_orig, ax_smooth]:
 
-    ax.view_init(elev=65, azim=90)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Depth")
 
-    ax.invert_yaxis()
-    ax.invert_zaxis()
+        ax.view_init(elev=65, azim=90)
 
-    ax.auto_scale_xyz(xs, ys, zs)
+        ax.invert_xaxis()
+        ax.invert_zaxis()
 
-    fig.colorbar(
-        scatter,
-        ax=ax,
-        label='Residual Texture'
-    )
+        ax.set_zlim(z_max, z_min)
+
+        ax.auto_scale_xyz(xs, ys, zs)
 
     plt.tight_layout()
     plt.show()
-
 
 def plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap, crop_padding=200):
 
@@ -876,6 +789,269 @@ def plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap, cr
     plt.show()
 
 
+def plot_fft_savoyness_process(
+    image,
+    mask,
+    texture,
+    patch_center,
+    patch_size,
+    magnitude,
+    freq_mask,
+    crop_padding=200
+):
+
+    x, y = patch_center
+    half = patch_size // 2
+
+    #
+    # Crop around leaf
+    #
+
+    ys, xs = np.where(mask)
+
+    y_min = max(int(ys.min() - crop_padding), 0)
+    y_max = min(int(ys.max() + crop_padding), image.shape[0])
+
+    x_min = max(int(xs.min() - crop_padding), 0)
+    x_max = min(int(xs.max() + crop_padding), image.shape[1])
+
+    image_crop = image[y_min:y_max, x_min:x_max]
+    texture_crop = texture[y_min:y_max, x_min:x_max]
+
+    #
+    # Draw contour
+    #
+
+    image_vis = draw_contour_overlay(
+        image_crop.copy(),
+        mask[y_min:y_max, x_min:x_max]
+    )
+
+    #
+    # Draw FFT patch location
+    #
+
+    rect_x = x - half - x_min
+    rect_y = y - half - y_min
+
+    rect = plt.Rectangle(
+        (rect_x, rect_y),
+        patch_size,
+        patch_size,
+        edgecolor='red',
+        facecolor='none',
+        linewidth=2
+    )
+
+    #
+    # Extract patch
+    #
+
+    patch = texture[
+        y-half:y+half,
+        x-half:x+half
+    ]
+
+    #
+    # Frequency band overlay
+    #
+
+    fft_overlay = magnitude.copy()
+
+    fft_overlay[~freq_mask] *= 0.15
+
+    #
+    # Plot
+    #
+
+    fig, axs = plt.subplots(
+        1,
+        4,
+        figsize=(20, 5)
+    )
+
+    #
+    # Leaf image
+    #
+
+    axs[0].imshow(image_vis)
+    axs[0].add_patch(rect)
+    axs[0].set_title("Leaf + Sampled Patch")
+
+    #
+    # Texture image
+    #
+
+    axs[1].imshow(
+        texture_crop,
+        cmap='gray'
+    )
+
+    axs[1].add_patch(
+        plt.Rectangle(
+            (rect_x, rect_y),
+            patch_size,
+            patch_size,
+            edgecolor='red',
+            facecolor='none',
+            linewidth=2
+        )
+    )
+
+    axs[1].set_title("High-pass Texture")
+
+    #
+    # FFT magnitude
+    #
+
+    axs[2].imshow(
+        magnitude,
+        cmap='inferno'
+    )
+
+    axs[2].set_title("FFT Magnitude Spectrum")
+
+    #
+    # Frequency band
+    #
+
+    axs[3].imshow(
+        fft_overlay,
+        cmap='inferno'
+    )
+
+    axs[3].set_title("Selected Frequency Band")
+
+    #
+    # Formatting
+    #
+
+    for ax in axs:
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_savoyness_process_grid(
+    mask,
+    image,
+    texture,
+    valid_mask,
+    clean_mask,
+    lap,
+    crop_padding=200
+):
+
+    #
+    # Crop region around leaf
+    #
+
+    ys, xs = np.where(mask)
+
+    y_min = max(int(ys.min() - crop_padding), 0)
+    y_max = min(int(ys.max() + crop_padding), image.shape[0])
+
+    x_min = max(int(xs.min() - crop_padding), 0)
+    x_max = min(int(xs.max() + crop_padding), image.shape[1])
+
+    #
+    # Cropped images
+    #
+
+    image_crop = image[y_min:y_max, x_min:x_max]
+
+    texture_crop = texture[y_min:y_max, x_min:x_max]
+
+    lap_crop = lap[y_min:y_max, x_min:x_max]
+
+    #
+    # Draw contour overlay
+    #
+
+    image_vis = draw_contour_overlay(
+        image_crop.copy(),
+        mask[y_min:y_max, x_min:x_max]
+    )
+
+    #
+    # Removed bright pixels visualisation
+    #
+
+    removed_pixels = (
+        clean_mask &
+        ~valid_mask
+    )
+
+    removed_crop = removed_pixels[
+        y_min:y_max,
+        x_min:x_max
+    ]
+
+    removed_vis = image_crop.copy()
+
+    #
+    # Colour removed pixels red
+    #
+
+    removed_vis[removed_crop] = [255, 0, 0]
+
+    #
+    # Plot layout
+    #
+
+    fig, axs = plt.subplots(
+        2,
+        2,
+        figsize=(12, 12)
+    )
+
+    #
+    # Top-left
+    #
+
+    axs[0, 0].imshow(image_vis)
+    axs[0, 0].set_title("Segmented Leaf")
+
+    #
+    # Top-right
+    #
+
+    axs[0, 1].imshow(removed_vis)
+    axs[0, 1].set_title("Removed Bright Pixels")
+
+    #
+    # Bottom-left
+    #
+
+    axs[1, 0].imshow(
+        texture_crop,
+        cmap='gray'
+    )
+    axs[1, 0].set_title("LAB Leaf Texture")
+
+    #
+    # Bottom-right
+    #
+
+    axs[1, 1].imshow(
+        lap_crop,
+        cmap='inferno'
+    )
+    axs[1, 1].set_title("Laplacian")
+
+    #
+    # Formatting
+    #
+
+    for row in axs:
+        for ax in row:
+            ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_strategy_comparison(
     results_med,
     results_mean,
@@ -928,9 +1104,6 @@ def plot_bins(
     bins,
     title="Learned Thresholds"
 ):
-    """
-    Plot score distributions and learned thresholds.
-    """
 
     plt.figure(figsize=(10, 6))
 
@@ -965,57 +1138,11 @@ def plot_bins(
     plt.show()
 
 
-# def predict_image_scores(
-#     test_leaf_scores,
-#     bins,
-#     method="binned_mean"
-# ):
-#     """
-#     Generate image-level predictions.
-#     """
-#
-#     preds = []
-#
-#     for scores in test_leaf_scores:
-#
-#         scores = np.asarray(scores)
-#
-#         if method == "raw_mean":
-#
-#             agg = np.mean(scores)
-#             pred = np.digitize(agg, bins) + 1
-#
-#         elif method == "raw_median":
-#
-#             agg = np.median(scores)
-#             pred = np.digitize(agg, bins) + 1
-#
-#         elif method == "binned_mean":
-#
-#             leaf_preds = np.digitize(scores, bins) + 1
-#             pred = int(np.round(np.mean(leaf_preds)))
-#
-#         elif method == "binned_median":
-#
-#             leaf_preds = np.digitize(scores, bins) + 1
-#             pred = int(np.round(np.median(leaf_preds)))
-#
-#         else:
-#             raise ValueError("Unknown method")
-#
-#         preds.append(pred)
-#
-#     return np.asarray(preds)
-
-
 def plot_prediction_scatter(
     gt,
     preds,
     title="Predicted vs Ground Truth"
 ):
-    """
-    Scatter plot of predictions vs GT.
-    """
 
     gt = np.asarray(gt)
     preds = np.asarray(preds)
@@ -1044,9 +1171,6 @@ def plot_confusion(
     n_classes=9,
     title="Confusion Matrix"
 ):
-    """
-    Plot confusion matrix.
-    """
 
     cm = confusion_matrix(
         gt,
@@ -1076,9 +1200,6 @@ def plot_leaf_score_distributions(
     test_labels,
     title="Leaf Score Distributions"
 ):
-    """
-    Visualize leaf score distributions by GT class.
-    """
 
     plt.figure(figsize=(10, 6))
 
@@ -1123,18 +1244,6 @@ def visualise_leaf_pairing(
     padding=200,
     figsize=(8, 8),
 ):
-    """
-    Visualise one inner-border ↔ outer-ring comparison.
-
-    Colors:
-    - green = leaf mask
-    - red   = inner border
-    - blue  = outer ring
-
-    Markers:
-    - yellow = selected inner point
-    - cyan   = matched outer point
-    """
 
     #
     # Crop bounds
@@ -1284,3 +1393,84 @@ def visualise_leaf_pairing(
     print()
 
     print(f"DIFFERENCE: {score:.4f}")
+
+
+def plot_sam_segmentation(image, mask, padding=200):
+
+    # mask coordinates
+    ys, xs = np.where(mask)
+
+    x = int(xs.mean())
+    y = int(ys.mean())
+
+    if len(xs) == 0 or len(ys) == 0:
+        print("Empty mask provided.")
+        return
+
+    # mask bounding box size
+    mask_w = xs.max() - xs.min()
+    mask_h = ys.max() - ys.min()
+
+    # crop size based on bbox + padding
+    crop_w = mask_w + 2 * padding
+    crop_h = mask_h + 2 * padding
+
+    # center crop on point prompt
+    x_min = max(x - crop_w // 2, 0)
+    x_max = min(x + crop_w // 2, image.shape[1])
+
+    y_min = max(y - crop_h // 2, 0)
+    y_max = min(y + crop_h // 2, image.shape[0])
+
+    # crop image + mask
+    cropped_img = image[y_min:y_max, x_min:x_max].copy()
+    cropped_mask = mask[y_min:y_max, x_min:x_max]
+
+    # point in crop coordinates
+    crop_x = x - x_min
+    crop_y = y - y_min
+
+    # bbox in crop coordinates
+    bx0 = xs.min() - x_min
+    bx1 = xs.max() - x_min
+    by0 = ys.min() - y_min
+    by1 = ys.max() - y_min
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+    # ---------------------------------------------------
+    # Left: point prompt
+    # ---------------------------------------------------
+    axes[0].imshow(cropped_img)
+    axes[0].scatter(crop_x, crop_y, c='red', s=80)
+    axes[0].set_title("Leaf Centroid")
+    axes[0].axis("off")
+
+    # ---------------------------------------------------
+    # Right: segmentation + bounding box
+    # ---------------------------------------------------
+    overlay = cropped_img.copy()
+
+    # overlay[cropped_mask.astype(bool)] = (
+    #     0.6 * overlay[cropped_mask.astype(bool)] +
+    #     0.4 * np.array([0, 255, 0])
+    # ).astype(np.uint8)
+
+    axes[1].imshow(overlay)
+
+    rect = plt.Rectangle(
+        (bx0, by0),
+        bx1 - bx0,
+        by1 - by0,
+        edgecolor='red',
+        facecolor='none',
+        linewidth=2
+    )
+
+    axes[1].add_patch(rect)
+
+    axes[1].set_title("Leaf Bounding Box")
+    axes[1].axis("off")
+
+    plt.tight_layout()
+    plt.show()

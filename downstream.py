@@ -31,10 +31,11 @@ def savoyness_fft(
     n=5,
     median_kernel=5,
     blur_sigma=8,
-    patch_size=64,
+    patch_size=50,
     n_patches=10,
     low_cut=4,
-    high_cut=16
+    high_cut=16,
+    display=False
 ):
     n = leaf_count_cap(leaf_masks, n)
 
@@ -70,6 +71,8 @@ def savoyness_fft(
     half = patch_size // 2
     scores = []
 
+    corner_distance = np.sqrt(2 * half**2)
+
     for label in range(1, n + 1):
 
         mask = (leaf_masks == label)
@@ -78,7 +81,7 @@ def savoyness_fft(
         clean_mask = erode_mask(
             mask,
             kernel_size=5,
-            iterations=20
+            iterations=2
         )
 
         #
@@ -92,7 +95,7 @@ def savoyness_fft(
             5
         )
 
-        valid_mask = distance >= half
+        valid_mask = distance >= corner_distance
 
         ys, xs = np.where(valid_mask)       
 
@@ -156,6 +159,17 @@ def savoyness_fft(
             score = band_energy / (total_energy + 1e-8)
 
             patch_scores.append(score)
+
+            if display:
+                plot_fft_savoyness_process(
+                    image=image,
+                    mask=mask,
+                    texture=texture,
+                    patch_center=(x, y),
+                    patch_size=patch_size,
+                    magnitude=magnitude,
+                    freq_mask=freq_mask
+                )
 
         scores.append(np.median(patch_scores))
 
@@ -245,7 +259,7 @@ def savoyness(
         V = hsv[:,:,2].astype(np.float32)
 
         artifact_mask = (
-            (V > 180) & (S < 40)
+            (V > 190) & (S < 30)
         )
 
         valid_mask = clean_mask & (~artifact_mask)
@@ -262,7 +276,9 @@ def savoyness(
 
         if display:
             print(f"Leaf {label} savoyness: {score:.4f}")
-            plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap)
+            # plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap)
+            plot_savoyness_process_grid(mask, image, texture, valid_mask, clean_mask, lap)
+
 
     # return np.mean(scores), scores
     return scores

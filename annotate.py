@@ -55,6 +55,7 @@ def interactive_hover(image, sam_predictor):
     mask = np.zeros((h, w), dtype=np.uint8)
     combined_mask = np.zeros((h, w), dtype=np.uint8)
     leaf_num = 1
+    previous = None
 
     # --- COLORING FUNCTION ---
     def mask_to_rgba(label_mask):
@@ -87,6 +88,32 @@ def interactive_hover(image, sam_predictor):
 
         return rgba
 
+    def on_undo(event):
+        if event.key == "escape":
+            nonlocal leaf_num, mask, combined_mask
+
+            if leaf_num == 1:
+                return
+
+            print(f"Undoing mask {leaf_num}")
+
+            leaf_num -= 1
+            combined_mask[combined_mask == leaf_num] = 0
+
+            combined_display.set_data(mask_to_rgba(combined_mask))
+            fig.canvas.draw_idle()
+
+    # --- CLICK EVENT ---
+    def onclick(event):
+        nonlocal leaf_num, mask, combined_mask
+
+        print("clicked")
+        combined_mask[mask == 1] = leaf_num
+        leaf_num += 1
+
+        combined_display.set_data(mask_to_rgba(combined_mask))
+        fig.canvas.draw_idle()
+
     # --- HOVER EVENT ---
     def on_move(event):
         nonlocal mask
@@ -110,33 +137,22 @@ def interactive_hover(image, sam_predictor):
         mask_display.set_data(rgba)
         fig.canvas.draw_idle()
 
-    # --- CLICK EVENT ---
-    def onclick(event):
-        nonlocal leaf_num, mask, combined_mask
-
-        print("clicked")
-        combined_mask[mask == 1] = leaf_num
-        leaf_num += 1
-
-        combined_display.set_data(mask_to_rgba(combined_mask))
-        fig.canvas.draw_idle()
-
     # Bind events
     fig.canvas.mpl_connect("motion_notify_event", on_move)
     fig.canvas.mpl_connect("button_press_event", onclick)
-
+    fig.canvas.mpl_connect("key_press_event", on_undo)
     plt.show()
 
     return combined_mask
 
-def main():
+def main(image_dir):
 
     sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
 
-    image_names = os.listdir(IMAGE_DIR)
+    image_names = os.listdir(image_dir)
 
     for name in image_names:
-        image_path = os.path.join(IMAGE_DIR, name)
+        image_path = os.path.join(image_dir, name)
         image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
 
         sam_predictor.set_image(image)
@@ -148,4 +164,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main("../data/right")

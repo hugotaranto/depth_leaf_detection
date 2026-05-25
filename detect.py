@@ -14,7 +14,7 @@ from util import *
 DBSCAN_DOWNSAMPLE_SIZE = 256
 CIRCULARITY_THRESHOLD = 0.75
 
-DISPLAY = False
+DISPLAY = True
 
 def get_foreground_mask_thresh(image):
 
@@ -89,10 +89,7 @@ def dbscan(depth_map, image, show=False):
     DEPTH_WEIGHT = 2.0
     scaled_points[:, 2] *= DEPTH_WEIGHT
 
-    # DBSCAN parameters
-    # eps = 0.05
-    # min_samples = 20
-
+    # DBSCAN PARAMETERS
     eps = 0.05
     min_samples = 15
 
@@ -186,7 +183,6 @@ def segment_with_sam(image, centroids, predictor):
         if num_labels > 2:
             continue  # skip disconnected masks
 
-
         # check if this leaf has already been segmented
         skip = False
         for existing_mask in leaf_masks:
@@ -213,6 +209,8 @@ def segment_with_sam(image, centroids, predictor):
         # save the leaf mask
         leaf_masks.append(selected_mask)
 
+        # plot_sam_segmentation(image, mask=selected_mask, padding=200)
+
     return combined_mask, leaf_masks
 
 
@@ -227,7 +225,8 @@ def score_leaves(
     leaf_segmentations,
     inset=4,
     border_distance=4,
-    display=False
+    display=False,
+    score_type="CUM"
 ):
 
     scores = []
@@ -314,7 +313,13 @@ def score_leaves(
 
             # score for the occlusion
             score = outer_depth - border_depth
-            score_cum += score
+
+            if score_type == "CUM":
+                score_cum += score
+            else:
+                if score > 0:
+                    score_cum += 1
+
             scores_rec.append(score)
 
         if num_checked == 0:
@@ -347,6 +352,26 @@ def load_sam(sam_path, sam_model_type):
     predictor = SamPredictor(sam)
     return predictor
 
+def order_mask(leaf_segmentations, scores):
+
+    if leaf_segmentations is None or scores is None:
+        return None
+
+    sorted_indices = np.argsort(scores)[::-1] # highest score first
+    
+    mapping = {}
+    for new_label, idx in enumerate(sorted_indices, start=1):
+        old_label = idx + 1
+        mapping[old_label] = new_label
+
+    remapped_mask = np.zeros_like(leaf_segmentations)
+
+    for old_label, new_label in mapping.items():
+        remapped_mask[leaf_segmentations == old_label] = new_label
+
+    remapped_mask = remapped_mask.astype(np.uint8)
+
+    return remapped_mask
 
 # save the segmentation mask as a png where the leaves are ranked by scores
 def save_segmentation_mask(leaf_segmentations, scores, name, path, height, width):
@@ -359,23 +384,28 @@ def save_segmentation_mask(leaf_segmentations, scores, name, path, height, width
 
     # scores is an array where score for leaf labeled 1 is at index 0, score for leaf labeled 2 is at index 1 etc
 
-    if leaf_segmentations is None or scores is None:
+    # if leaf_segmentations is None or scores is None:
+    #     save_empty_mask(height, width, name, path)
+    #     return
+    #
+    # sorted_indices = np.argsort(scores)[::-1] # highest score first
+    #
+    # mapping = {}
+    # for new_label, idx in enumerate(sorted_indices, start=1):
+    #     old_label = idx + 1
+    #     mapping[old_label] = new_label
+    #
+    # remapped_mask = np.zeros_like(leaf_segmentations)
+    #
+    # for old_label, new_label in mapping.items():
+    #     remapped_mask[leaf_segmentations == old_label] = new_label
+    #
+    # remapped_mask = remapped_mask.astype(np.uint8)
+
+    remapped_mask = order_mask(leaf_segmentations, scores)
+    if remapped_mask is None:
         save_empty_mask(height, width, name, path)
         return
-
-    sorted_indices = np.argsort(scores)[::-1] # highest score first
-
-    mapping = {}
-    for new_label, idx in enumerate(sorted_indices, start=1):
-        old_label = idx + 1
-        mapping[old_label] = new_label
-
-    remapped_mask = np.zeros_like(leaf_segmentations)
-
-    for old_label, new_label in mapping.items():
-        remapped_mask[leaf_segmentations == old_label] = new_label
-
-    remapped_mask = remapped_mask.astype(np.uint8)
 
     os.makedirs(path, exist_ok=True)
     cv2.imwrite(os.path.join(path, name), remapped_mask)
@@ -429,7 +459,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         marigold_depth = load_std_depth(name, MARIGOLD_DIR)
         depth_pro_depth = load_std_depth(name, DEPTH_PRO_DIR)
 
-        h, w = image.shape[:2]
+        w, h = image.shape[:2]
 
         centroids = dbscan(marigold_depth, image, show=DISPLAY)
 
@@ -444,7 +474,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         if DISPLAY:
             plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_pro_depth, leaf_segmentations)
+        scores = score_leaves(depth_pro_depth, leaf_segmentations, display=DISPLAY)
 
         if DISPLAY:
             visualise_top_leaves(image, leaf_segmentations, scores, n=5)
@@ -485,9 +515,10 @@ def main():
         plot_dir = os.path.join(IMAGE_DIR, plot)
         segmentation_masks = detect_plot(plot_dir, sam_predictor, save_dir=DETECTION_OUTPUT)
 
+
 if __name__ == "__main__":
-    main()
-    # sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
+    # main()
+    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
 
     # segmentation_masks = detect_plot(IMAGE_DIR, sam_predictor, save_dir=DETECTION_OUTPUT)
-    # segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)
+    segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)

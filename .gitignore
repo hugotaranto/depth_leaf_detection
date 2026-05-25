@@ -8,3 +8,5 @@ samv3_out
 data
 dependencies
 *.pkl
+leaf_segment.py
+results
