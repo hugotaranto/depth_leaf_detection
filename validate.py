@@ -15,9 +15,8 @@ import pickle
 
 from detect import score_leaves, order_mask
 
-SAVOYNESS_TYPE = "RGB"
 DISPLAY = False
-NUM_LEAVES = 5
+NUM_LEAVES = 10
 
 @dataclass
 class PlotEvaluation:
@@ -45,34 +44,144 @@ def load_gt_pred_pairs(name, gt_path, pred_path, image_path):
 
     return gt, pred, image
 
-def load_mono_depth(name, data_dir, depth_type):
+def cross_validate_scoring(
+    plots,
+    ground_truth,
+    preds,
+    n_splits=10,
+    test_ratio=0.3,
+    keep_num=None
+):
 
-    name = os.path.splitext(name)[0]
-    
-    if depth_type == "MARIGOLD":
-        # construct the depth name
-        depth_name = f"{name}_depth.npy"
-    elif depth_type == "DEPTH_PRO":
-        depth_name = f"{name}.npz"
+    strategies = [
+        "raw_mean",
+        "raw_median",
+        "binned_mean",
+        "binned_median"
+    ]
 
-    else:
-        raise RuntimeError(f"Depth type: {depth_type} no supported")
+    results = {}
 
-    depth_path = os.path.join(data_dir, depth_name)
+    #
+    # Initialise storage
+    #
 
+    for strategy in strategies:
 
-    if not os.path.exists(depth_path):
-        raise RuntimeError(f"Could not find depth corresponding depth file: {depth_path}")
+        results[strategy] = {
+            "mae": [],
+            "accuracy": [],
+            "off_by_one": [],
+            "preds": [],
+            "labels": []
+        }
 
-    if depth_type == "MARIGOLD":
-        depth = np.load(depth_path).astype(np.float32)
-    elif depth_type == "DEPTH_PRO":
-        depth = np.load(depth_path)
-        depth = depth["depth"].astype(np.float32)
-    else:
-        raise RuntimeError(f"Depth type: {depth_type} no supported")
+    #
+    # Cross validation
+    #
 
-    return depth
+    for seed in range(n_splits):
+
+        # print(f"Split {seed + 1}/{n_splits}")
+
+        train_plots, train_labels, test_plots, test_labels = split_by_plot(
+            plots,
+            ground_truth,
+            test_ratio=test_ratio,
+            seed=seed
+        )
+
+        train_eval = create_evaluation(
+            train_plots,
+            train_labels,
+            preds,
+            keep_num=keep_num
+        )
+
+        test_eval = create_evaluation(
+            test_plots,
+            test_labels,
+            preds,
+            keep_num=keep_num
+        )
+
+        #
+        # Fit bins
+        #
+
+        bins_med = fit_bins(
+            train_eval.medians,
+            train_eval.plot_labels
+        )
+
+        bins_mean = fit_bins(
+            train_eval.means,
+            train_eval.plot_labels
+        )
+
+        bins_all = fit_bins(
+            train_eval.scores,
+            train_eval.leaf_labels
+        )
+
+        strategy_bins = {
+            "raw_mean": bins_mean,
+            "raw_median": bins_med,
+            "binned_mean": bins_all,
+            "binned_median": bins_all
+        }
+
+        #
+        # Evaluate each strategy
+        #
+
+        for strategy in strategies:
+
+            preds_split = predict_image_scores(
+                test_eval.scores_list,
+                strategy_bins[strategy],
+                method=strategy
+            )
+
+            metrics = evaluate_predictions(
+                preds_split,
+                test_eval.plot_labels
+            )
+
+            results[strategy]["mae"].append(
+                metrics["mae"]
+            )
+
+            results[strategy]["accuracy"].append(
+                metrics["accuracy"]
+            )
+
+            results[strategy]["off_by_one"].append(
+                metrics["off_by_one"]
+            )
+
+            results[strategy]["preds"].extend(
+                preds_split
+            )
+
+            results[strategy]["labels"].extend(
+                test_eval.plot_labels
+            )
+
+    #
+    # Convert to arrays
+    #
+
+    for strategy in strategies:
+
+        for key in results[strategy]:
+
+            results[strategy][key] = np.asarray(
+                results[strategy][key]
+            )
+
+    return results
+
 
 
 def validate_predictions(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_score=0.4):
@@ -358,14 +467,24 @@ def fit_bins(scores, labels, n_classes=9):
 
     return np.array(bins)
 
-def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=False):
+def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=False, gt=None):
 
     res_scores = {}
 
     n_plots = len(plots)
     plot_count = 0
 
-    for plot in plots:
+    for i in range(len(plots)):
+        plot = plots[i]
+        if gt is not None:
+            ground_truth = gt[i]
+        else:
+            ground_truth = None
+
+        if display and ground_truth:
+            print(f"Ground Truth for plot: {ground_truth}")
+            print("\n\n")
+
         if plot_count > 0:
             sys.stdout.write("\x1b[2F")
 
@@ -417,12 +536,13 @@ def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=
                     scores = leaf_cupping_mono(detections, depth, eval=CUPPING_EVAL_METHOD, n=n_leaves,
                                                    image = image, display=display)
                 else:
-                    raise ValueError(f"Unsupported Attribute: {attribute}")
+                    raise ValueError(f"Unsupported Leaf Trait: {attribute}")
 
                 if scores is None:
                     continue
 
-                plot_scores.extend(scores)
+                # plot_scores.extend(scores)
+                plot_scores.append(scores)
 
         # res_scores.append(plot_scores)
         res_scores[plot] = plot_scores
@@ -469,25 +589,34 @@ def split_by_plot(plots, labels, test_ratio=0.2, seed=10):
     return train_plots, train_labels, test_plots, test_labels
 
 
-def create_evaluation(plots, plot_labels, scores_dict):
+def create_evaluation(plots, plot_labels, scores_dict, keep_num=None):
     eval = PlotEvaluation()
 
     for i in range(len(plots)):
         plot = plots[i]
         label = plot_labels[i]
 
-        scores = scores_dict[plot] # the scores for the given plot
-        eval.scores.extend(scores)
-        eval.means.append(np.mean(scores))
-        eval.medians.append(np.median(scores))
-        eval.scores_list.append(scores)
+        scores = scores_dict[plot] # the scores for the given plot in form [[im1_leaf1, im1_leaf2], [im2_leaf1 ..] ...]
 
-        eval.leaf_labels.extend([label] * len(scores))
+        # aggregate all scores from each image together into combined plot scores
+        if keep_num is None: 
+            combined_scores = np.concatenate(scores)
+        else:
+            combined_scores = np.concatenate([
+                im_scores[:keep_num] for im_scores in scores
+            ])
+
+        eval.scores.extend(combined_scores)
+        eval.means.append(np.mean(combined_scores))
+        eval.medians.append(np.median(combined_scores))
+        eval.scores_list.append(combined_scores)
+
+        eval.leaf_labels.extend([label] * len(combined_scores))
         eval.plot_labels.append(label)
 
     return eval
 
-def load_scores(plots, image_dir=IMAGE_DIR, n_leaves=5, scores_method="SAVOYNESS", display=False):
+def load_scores(plots, image_dir=IMAGE_DIR, n_leaves=5, scores_method="SAVOYNESS", display=False, gt=None):
 
     # compute the scores on the provided plots
     # load the savoyness scores from file if specified:
@@ -504,21 +633,22 @@ def load_scores(plots, image_dir=IMAGE_DIR, n_leaves=5, scores_method="SAVOYNESS
                 scores = pickle.load(f)
                 print(f"Loaded scores from: {file}")
         except:
-            scores = compute_scores(plots, image_dir, n_leaves=n_leaves, attribute=scores_method, display=display)
+            scores = compute_scores(plots, image_dir, n_leaves=n_leaves, attribute=scores_method, display=display, gt=gt)
             with open(file, "wb") as f:
                 pickle.dump(scores, f)
 
     else:
-        scores = compute_scores(plots, image_dir, n_leaves=n_leaves, attribute=scores_method, display=True)
+        scores = compute_scores(plots, image_dir, n_leaves=n_leaves, attribute=scores_method, display=display, gt=gt)
 
     return scores
 
-def evaluate_scoring(plots, ground_truth, preds, test_ratio=0.7):
+def evaluate_scoring(plots, ground_truth, preds, test_ratio=0.7, keep_num=None):
+
 
     train_plots, train_labels, test_plots, test_labels = split_by_plot(plots, ground_truth, test_ratio=test_ratio)
 
-    train_eval = create_evaluation(train_plots, train_labels, preds)
-    test_eval = create_evaluation(test_plots, test_labels, preds)
+    train_eval = create_evaluation(train_plots, train_labels, preds, keep_num=keep_num)
+    test_eval = create_evaluation(test_plots, test_labels, preds, keep_num=keep_num)
 
     results_analysis_plot(train_eval, test_eval)
 
@@ -551,17 +681,40 @@ def validate_downstream_scoring(image_dir, n_leaves, database_file, display=Fals
             cupping_plots.append(plot)
             cupping_gt.append(cupping)
 
+    # plot_gt_coverage(ground_truth=savoyness_gt,
+    #                  num_classes=9,
+    #                  score_type="Savoyness")
+    #
+    # plot_gt_coverage(ground_truth=cupping_gt,
+    #                  num_classes=9,
+    #                  score_type="Cupping")
+
     savoyness_scores = load_scores(savoyness_plots, image_dir=image_dir, n_leaves=n_leaves,
-                                   scores_method="SAVOYNESS", display=display)
+                                   scores_method="SAVOYNESS", display=display, gt=savoyness_gt)
 
     cupping_scores = load_scores(cupping_plots, image_dir=image_dir, n_leaves=n_leaves,
-                                   scores_method="CUPPING", display=display)
+                                   scores_method="CUPPING", display=display, gt=cupping_gt)
 
     # now we want to split into train/test given the scores.
     # this is to be done evenly given the distribution of scores
 
-    evaluate_scoring(savoyness_plots, savoyness_gt, savoyness_scores)
-    evaluate_scoring(cupping_plots, cupping_gt, cupping_scores)
+    # run through each of the number of leaves to keep from each image
+    leaves_to_keep = [1, 2, 3, 5, 10]
+
+    for keep_num in leaves_to_keep:
+        print(f"Evaluating Scoring for {keep_num} leaves per image:")
+
+        # evaluate_scoring(savoyness_plots, savoyness_gt, savoyness_scores, keep_num=keep_num)
+        # evaluate_scoring(cupping_plots, cupping_gt, cupping_scores, keep_num=keep_num)
+
+        results = cross_validate_scoring(savoyness_plots, savoyness_gt, savoyness_scores, n_splits=5, test_ratio=0.7, keep_num=keep_num)
+        plot_cv_metrics(results, n_leaves=keep_num)
+
+        plot_best_strategy_results(
+            results,
+            strategy="binned_mean",
+            title="Savoyness"
+        )
 
 
 def results_analysis_plot(train_eval:PlotEvaluation, test_eval:PlotEvaluation):
@@ -648,6 +801,7 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
     for name in image_names:
         # check to see where the image is
         image_folder = find_image(name, image_dir)
+
         if image_folder is None:
             continue
 
@@ -661,7 +815,7 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
             else:
                 depth_map = load_std_depth(name, MARIGOLD_DIR)
 
-            seg_scores = score_leaves(depth_map=depth_map, leaf_segmentations=detection,
+            seg_scores = score_leaves(depth_map=depth_map, segmented_mask=detection,
                                       score_type=score_type, inset=inset, border_distance=border_distance)
 
             detection = order_mask(detection, seg_scores)
@@ -675,8 +829,8 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
         num_leaves_requested += num_leaves
         iou_scores_cum.extend(iou_scores)
 
-    correct = correct_preds / num_leaves_cum
-    correct_requested = correct_preds / num_leaves_requested
+    correct = (correct_preds / num_leaves_cum * 100)
+    correct_requested = (correct_preds / num_leaves_requested) * 100
     iou_mean = np.mean(iou_scores_cum)
 
     # print(f"Correctly detected {correct * 100:.2f}% of leaves\nMean IOU segmentation accuracy: {iou_mean}")
@@ -690,7 +844,7 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
 
 
 def main():
-    # validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
+    validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
 
     # validation for proposed technique
     # results = validate_detection("../data/left", num_leaves=5,
@@ -699,33 +853,49 @@ def main():
     #                    rescore=True,
     #                    score_type="CUM",
     #                    depth_type="DEPTH_PRO")
-    results = validate_detection("../data/left", num_leaves=5,
-                                 annotation_dir=ANNOTATION_DIR,
-                                 detection_output=DETECTION_OUTPUT,
-                                 rescore=False)
 
-    print(results)
-
-    # validate_detection("../data/left", num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output="./data/rcnn_detections",
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
+    # print("PROPOSED")
+    # results = validate_detection(IMAGE_DIR, num_leaves=5,
+    #                              annotation_dir=ANNOTATION_DIR,
+    #                              detection_output=DETECTION_OUTPUT,
+    #                              rescore=True,
+    #                              inset=0,
+    #                              border_distance=0,
+    #                              score_type="CUM",
+    #                              depth_type="DEPTH_PRO")
     #
-    # validate_detection("../data/left", num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output="./data/yolo_detections",
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
+    # print(results)
     #
-    # validate_detection("../data/left", num_leaves=5,
+    #
+    # print("SAMV3")
+    # results = validate_detection(IMAGE_DIR, num_leaves=5,
     #                    annotation_dir=ANNOTATION_DIR,
     #                    detection_output="./data/samv3_out/merged",
     #                    rescore=True,
     #                    score_type="CUM",
     #                    depth_type="DEPTH_PRO")
+    #
+    # print(results)
+
+    #
+    # print("RCNN")
+    # results = validate_detection(IMAGE_DIR, num_leaves=5,
+    #                    annotation_dir=ANNOTATION_DIR,
+    #                    detection_output="./data/rcnn_detections",
+    #                    rescore=True,
+    #                    score_type="CUM",
+    #                    depth_type="DEPTH_PRO")
+    # print(results)
+    #
+    # print("YOLO")
+    # results = validate_detection(IMAGE_DIR, num_leaves=5,
+    #                    annotation_dir=ANNOTATION_DIR,
+    #                    detection_output="./data/yolo_detections",
+    #                    rescore=True,
+    #                    score_type="CUM",
+    #                    depth_type="DEPTH_PRO")
+    # print(results)
+
 
 
 if __name__ == "__main__":

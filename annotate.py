@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import os
 from segment_anything import sam_model_registry, SamPredictor
 import torch
+import shutil
+from util import *
 
 from constants import *
 
@@ -37,7 +39,7 @@ def load_sam(sam_path, sam_model_type):
     predictor = SamPredictor(sam)
     return predictor
 
-def interactive_hover(image, sam_predictor):
+def interactive_hover(image, sam_predictor, combined_mask=None):
     fig, ax = plt.subplots(figsize=(12, 8))
     ax.imshow(image)
     ax.set_title("Hover to segment")
@@ -53,9 +55,17 @@ def interactive_hover(image, sam_predictor):
 
     # --- MASKS ---
     mask = np.zeros((h, w), dtype=np.uint8)
-    combined_mask = np.zeros((h, w), dtype=np.uint8)
-    leaf_num = 1
-    previous = None
+    if combined_mask is None:
+        combined_mask = np.zeros((h, w), dtype=np.uint8)
+        leaf_num = 1
+        previous = None
+
+    else:
+        leaf_num = len(np.unique(combined_mask))
+        previous = leaf_num - 1
+        if previous == 0:
+            previous = None
+
 
     # --- COLORING FUNCTION ---
     def mask_to_rgba(label_mask):
@@ -137,6 +147,9 @@ def interactive_hover(image, sam_predictor):
         mask_display.set_data(rgba)
         fig.canvas.draw_idle()
 
+    combined_display.set_data(mask_to_rgba(combined_mask))
+    fig.canvas.draw_idle()
+
     # Bind events
     fig.canvas.mpl_connect("motion_notify_event", on_move)
     fig.canvas.mpl_connect("button_press_event", onclick)
@@ -162,6 +175,62 @@ def main(image_dir):
 
         save_to_file(name, mask)
 
+def random_sample(image_dir, sam_predictor, seed=10, input="./data/rcnn_input", overwrite=False):
+    plots = os.listdir(image_dir)
+    np.random.seed(seed)
+
+    # randomly pick 30 plots
+    plots = np.random.choice(plots, 30)
+
+    # make sure the input path exists
+    if not os.path.exists(input):
+        os.makedirs(input)
+
+    for plot in plots:
+        # randomly select one image from each plot
+        
+        plot_dir = os.path.join(image_dir, plot)
+
+        cams = os.listdir(plot_dir)
+
+        images = []
+        for cam in cams:
+            images.extend(os.listdir(os.path.join(plot_dir, cam)))
+
+        images = np.sort(images)
+
+        if images is None:
+            continue
+
+        # select the image
+        image_name = np.random.choice(images)
+        cur_image_dir = find_image(image_name, plot_dir)
+
+        if cur_image_dir is None:
+            continue
+
+        image_path = os.path.join(cur_image_dir, image_name)
+
+        # copy this file out for inference using rcnn/yolo models
+        shutil.copy(image_path, os.path.join(input, image_name))
+
+        combined_mask = None
+        # check if the image has already been annotated
+        if not overwrite:
+            annotated = os.listdir(ANNOTATION_DIR)
+            if image_name in annotated:
+                print(f"Already annotated image: {image_name}")
+                combined_mask = load_image(image_name, ANNOTATION_DIR)
+
+        # annotate the image
+        image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        sam_predictor.set_image(image)
+        mask = interactive_hover(image, sam_predictor, combined_mask=combined_mask)
+
+        save_to_file(image_name, mask)
 
 if __name__ == "__main__":
-    main("../data/right")
+    # main("../data/right")
+    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
+    random_sample("./data/images", sam_predictor)
+

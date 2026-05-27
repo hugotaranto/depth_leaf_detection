@@ -10,11 +10,13 @@ import sys
 from plots import *
 from constants import *
 from util import *
+# from scipy.spatial import cKDTree
+# from scipy.spatial.ckdtree import cKDTree
 
 DBSCAN_DOWNSAMPLE_SIZE = 256
 CIRCULARITY_THRESHOLD = 0.75
 
-DISPLAY = True
+DISPLAY = False
 
 def get_foreground_mask_thresh(image):
 
@@ -219,12 +221,11 @@ def mask_iou(mask1, mask2):
     union = np.logical_or(mask1, mask2).sum()
     return intersection / union
 
-
 def score_leaves(
     depth_map,
-    leaf_segmentations,
-    inset=4,
-    border_distance=4,
+    segmented_mask,
+    inset=0,
+    border_distance=1,
     display=False,
     score_type="CUM"
 ):
@@ -233,9 +234,12 @@ def score_leaves(
 
     kernel = np.ones((3, 3), np.uint8)
 
-    for mask in leaf_segmentations:
+    labels = np.unique(segmented_mask)
+    labels = labels[labels != 0]  # remove background
 
-        mask = mask.astype(np.uint8)
+    for label in labels:
+
+        mask = (segmented_mask == label).astype(np.uint8)
 
         #
         # INNER BORDER
@@ -262,7 +266,12 @@ def score_leaves(
         )
 
         if display:
-            visualise_leaf_regions(depth_map, mask, inner_border, outer_ring)
+            visualise_leaf_regions(
+                depth_map,
+                mask,
+                inner_border,
+                outer_ring
+            )
 
         inner_coords = np.column_stack(np.where(inner_border > 0))
         outer_coords = np.column_stack(np.where(outer_ring > 0))
@@ -285,14 +294,8 @@ def score_leaves(
             scores.append(0)
             continue
 
-        num_checked = 0
-
-        #
-        # For each inner border pixel: find nearest outer pixel
-        #
-
         score_cum = 0
-        scores_rec = []
+        num_checked = 0
 
         for y, x in inner_coords:
 
@@ -303,7 +306,6 @@ def score_leaves(
 
             num_checked += 1
 
-            # compute squared distances to all outer points
             dy = outer_coords[:, 0] - y
             dx = outer_coords[:, 1] - x
             dist2 = dy * dy + dx * dx
@@ -311,7 +313,6 @@ def score_leaves(
             nearest_idx = np.argmin(dist2)
             outer_depth = outer_depth_values[nearest_idx]
 
-            # score for the occlusion
             score = outer_depth - border_depth
 
             if score_type == "CUM":
@@ -319,8 +320,6 @@ def score_leaves(
             else:
                 if score > 0:
                     score_cum += 1
-
-            scores_rec.append(score)
 
         if num_checked == 0:
             scores.append(0)
@@ -383,24 +382,6 @@ def save_segmentation_mask(leaf_segmentations, scores, name, path, height, width
     # need to re-order these based off of the scores array
 
     # scores is an array where score for leaf labeled 1 is at index 0, score for leaf labeled 2 is at index 1 etc
-
-    # if leaf_segmentations is None or scores is None:
-    #     save_empty_mask(height, width, name, path)
-    #     return
-    #
-    # sorted_indices = np.argsort(scores)[::-1] # highest score first
-    #
-    # mapping = {}
-    # for new_label, idx in enumerate(sorted_indices, start=1):
-    #     old_label = idx + 1
-    #     mapping[old_label] = new_label
-    #
-    # remapped_mask = np.zeros_like(leaf_segmentations)
-    #
-    # for old_label, new_label in mapping.items():
-    #     remapped_mask[leaf_segmentations == old_label] = new_label
-    #
-    # remapped_mask = remapped_mask.astype(np.uint8)
 
     remapped_mask = order_mask(leaf_segmentations, scores)
     if remapped_mask is None:
@@ -474,7 +455,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         if DISPLAY:
             plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_pro_depth, leaf_segmentations, display=DISPLAY)
+        scores = score_leaves(depth_pro_depth, segmented_mask, display=DISPLAY)
 
         if DISPLAY:
             visualise_top_leaves(image, leaf_segmentations, scores, n=5)
@@ -517,8 +498,10 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
+    main()
+    # sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
 
     # segmentation_masks = detect_plot(IMAGE_DIR, sam_predictor, save_dir=DETECTION_OUTPUT)
-    segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)
+    # segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)
+
+

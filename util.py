@@ -17,10 +17,13 @@ def load_image(name, image_dir):
     return image
 
 def load_std_depth(name, dir):
-    base_name = os.path.splitext(name)[0]
-    depth_path = os.path.join(dir, f"{base_name}.npy")
-    depth = np.load(depth_path).astype(np.float32)
-    return depth
+    try:
+        base_name = os.path.splitext(name)[0]
+        depth_path = os.path.join(dir, f"{base_name}.npy")
+        depth = np.load(depth_path).astype(np.float32)
+        return depth
+    except:
+        return None
 
 def load_depth(name, depth_dir, depth_type):
 

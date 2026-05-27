@@ -27,8 +27,8 @@ DEPTH_PRO_CONFIG = DepthProConfig(
 )
 
 # leaf detection output
-DETECTION_OUTPUT = "./data/detection_out"
-# DETECTION_OUTPUT = "./data/samv3_out/merged"
+# DETECTION_OUTPUT = "./data/detection_out"
+DETECTION_OUTPUT = "./data/samv3_out/merged"
 
 DOWNSTREAM_DEPTH_TYPE = "DEPTH_PRO"
 
@@ -37,12 +37,18 @@ BINS_FILE = "./bins.npz"
 # DATABASE = "./data/dataset.csv"
 DATABASE = "./data/Trial 26.csv"
 
-SAVOYNESS_EVAL_METHOD = "FFT"       # can be: DEPTH, LAPLACE, FFT
+SAVOYNESS_EVAL_METHOD = "LAPLACE"       # can be: DEPTH, LAPLACE, FFT
 CUPPING_EVAL_METHOD = "QUADRATIC"   # can be: QUADRATIC, PLANE
 
-SAVED_SAVOYNESS_SCORES = "savoyness_fft.pkl"
-# SAVED_SAVOYNESS_SCORES = None
+# SAVED_SAVOYNESS_SCORES = "./savoyness.pkl"
+# SAVED_SAVOYNESS_SCORES = "savoyness_fft.pkl"
+# SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_proposed.pkl"
+# SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_proposed_44.pkl"
+SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_sam3.pkl"
 
-SAVED_CUPPING_SCORES = "cupping.pkl"
+# SAVED_CUPPING_SCORES = "cupping.pkl"
 # SAVED_CUPPING_SCORES = None
+# SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_proposed.pkl"
+# SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_proposed_44.pkl"
+SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_sam3.pkl"
 

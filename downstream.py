@@ -161,6 +161,7 @@ def savoyness_fft(
             patch_scores.append(score)
 
             if display:
+
                 plot_fft_savoyness_process(
                     image=image,
                     mask=mask,
@@ -172,6 +173,10 @@ def savoyness_fft(
                 )
 
         scores.append(np.median(patch_scores))
+
+        if display:
+            print("\n\n")
+            print(f"Computed FFT score for leaf: {np.median(patch_scores)}")
 
     return scores
     
@@ -275,9 +280,11 @@ def savoyness(
         scores.append(score)
 
         if display:
+            print("\n\n")
             print(f"Leaf {label} savoyness: {score:.4f}")
             # plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap)
             plot_savoyness_process_grid(mask, image, texture, valid_mask, clean_mask, lap)
+            # plot_selected_leaf(mask, image)
 
 
     # return np.mean(scores), scores
@@ -378,6 +385,7 @@ def savoyness_depth(
         scores.append(score)
 
         if display:
+            print("\n\n")
             print(f"Savoyness: {score:.4f}")
             plot_leaf_savoyness(xs, ys, zs, smooth_zs, residuals, image=image, mask=mask)
 
@@ -441,8 +449,9 @@ def leaf_cupping_mono(leaf_masks, mono_depth, eval="QUADRATIC", n=5, remove_outl
             score = np.std(residuals)
             scores.append(score)
             if display:
-                plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
+                print("\n\n")
                 print(f"Leaf {eval} score: {score}")
+                plot_leaf_from_points(xs, ys, zs, a, b, c, image=image, mask=mask)
 
         else:
 
@@ -455,8 +464,9 @@ def leaf_cupping_mono(leaf_masks, mono_depth, eval="QUADRATIC", n=5, remove_outl
 
             scores.append(score)
             if display:
-                plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
+                print("\n\n")
                 print(f"Leaf {eval} score: {score}")
+                plot_leaf_quadratic(xs, ys, zs, coeffs_quad, image, mask=mask)
 
     return scores
 

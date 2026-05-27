@@ -4,6 +4,8 @@ import numpy as np
 import cv2
 from sklearn.metrics import confusion_matrix
 from matplotlib.gridspec import GridSpec
+import pandas as pd
+from scipy.stats import pearsonr
 
 DPI = 100
 
@@ -108,7 +110,7 @@ def show_dbscan_clusters(depth_map, filtered_xy, labels, image, depth, centroids
     plt.show()
 
 def plot_segmentation_mask(image, mask):
-    width, height = image.shape[:2]
+    height, width = image.shape[:2]
     combined_mask = np.ma.masked_where(mask == 0, mask)  # mask out zeros
 
     # --- 1. Build custom "no-green" colormap ---
@@ -684,6 +686,52 @@ def plot_leaf_savoyness(
 
     plt.tight_layout()
     plt.show()
+
+def plot_selected_leaf(mask, image, im_size=500):
+
+    #
+    # Crop region around leaf
+    #
+
+    ys, xs = np.where(mask)
+
+    y_size = np.max(ys) - np.min(ys)
+    x_size = np.max(xs) - np.min(xs)
+
+    y_padding = (im_size - y_size) // 2
+    x_padding = (im_size - x_size) // 2
+
+    y_min = max(int(ys.min() - y_padding), 0)
+    y_max = min(int(ys.max() + y_padding), image.shape[0])
+
+    x_min = max(int(xs.min() - x_padding), 0)
+    x_max = min(int(xs.max() + x_padding), image.shape[1])
+
+    image_crop = image[y_min:y_max, x_min:x_max]
+
+    image_vis = draw_contour_overlay(
+        image_crop.copy(),
+        mask[y_min:y_max, x_min:x_max]
+    )
+
+    fig = plt.figure(frameon=False)
+
+    plt.axis("off")
+    plt.imshow(image_vis)
+
+    plt.subplots_adjust(
+        left=0,
+        right=1,
+        top=1,
+        bottom=0
+    )
+
+    plt.margins(0, 0)
+
+    cv2.imwrite("savoyness_gt3.png", image_vis)
+
+    plt.show()
+
 
 def plot_savoyness_process(mask, image, texture, valid_mask, clean_mask, lap, crop_padding=200):
 
@@ -1474,3 +1522,326 @@ def plot_sam_segmentation(image, mask, padding=200):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_num_leaves_used(df, metric="correct", title="Accuracy vs Number of Leaves Used"):
+
+    plt.figure(figsize=(8, 5))
+
+    methods = df["method"].unique()
+
+    for method in methods:
+
+        method_df = (
+            df[df["method"] == method]
+            .sort_values("number leaves")
+        )
+
+        x = method_df["number leaves"]
+        y = method_df[metric]
+
+        plt.plot(
+            x,
+            y,
+            marker="o",
+            linewidth=2,
+            label=method.upper()
+        )
+
+    plt.xlabel("Number of Leaves Used")
+    plt.ylabel("Accuracy (%)")
+    plt.title(title)
+
+    plt.xticks(sorted(df["number leaves"].unique()))
+
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_gt_coverage(
+    ground_truth,
+    num_classes,
+    score_type="Score"
+):
+
+    #
+    # Compute counts
+    #
+
+    classes = np.arange(1, num_classes + 1)
+
+    unique, counts = np.unique(ground_truth, return_counts=True)
+
+    count_dict = dict(zip(unique, counts))
+
+    frequencies = np.array([
+        count_dict.get(cls, 0)
+        for cls in classes
+    ])
+
+    percentages = (
+        frequencies / np.sum(frequencies)
+    ) * 100
+
+    #
+    # Create dataframe
+    #
+
+    df = pd.DataFrame({
+        "Class": classes,
+        "Count": frequencies,
+        "Percentage": percentages
+    })
+
+    #
+    # Plot
+    #
+
+    plt.rcParams.update({
+        "font.size": 16,
+        "axes.titlesize": 22,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "legend.fontsize": 16
+    })
+
+    plt.figure(figsize=(8, 5))
+
+    bars = plt.bar(
+        classes,
+        frequencies
+    )
+
+    max_height = np.max(frequencies)
+    plt.ylim(0, max_height * 1.15)
+
+    #
+    # Add labels above bars
+    #
+
+    for bar, count, pct in zip(bars, frequencies, percentages):
+
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{count}\n({pct:.1f}%)",
+            ha="center",
+            va="bottom",
+            fontsize=14
+        )
+
+    plt.xlabel(f"{score_type} Class")
+    plt.ylabel("Number of Samples")
+
+    plt.title(
+        f"{score_type} Ground Truth Distribution"
+    )
+
+    plt.xticks(classes)
+
+    plt.grid(axis="y", linestyle="--", alpha=0.5)
+
+    plt.tight_layout()
+    plt.show()
+
+    #
+    # Print LaTeX table
+    #
+
+    total_count = np.sum(frequencies)
+
+    latex = []
+
+    latex.append("\\begin{table}[H]")
+    latex.append("\\centering")
+    latex.append("\\renewcommand{\\arraystretch}{1.2}")
+    latex.append("\\setlength{\\tabcolsep}{10pt}")
+
+    latex.append("\\begin{tabular}{ccc}")
+    latex.append("\\hline")
+
+    latex.append(
+        "\\textbf{Class} & "
+        "\\textbf{Count} & "
+        "\\textbf{Percentage (\\%)} \\\\"
+    )
+
+    latex.append("\\hline")
+
+    for cls, count, pct in zip(classes, frequencies, percentages):
+
+        latex.append(
+            f"{cls} & "
+            f"{count} & "
+            f"{pct:.1f} \\\\"
+        )
+
+    latex.append("\\hline")
+
+    #
+    # Total row
+    #
+
+    latex.append(
+        f"\\textbf{{Total}} & "
+        f"\\textbf{{{total_count}}} & "
+        f"\\textbf{{100.0}} \\\\"
+    )
+
+    latex.append("\\hline")
+    latex.append("\\end{tabular}")
+
+    latex.append(
+        f"\\caption{{Distribution of ground truth "
+        f"{score_type.lower()} scores across all classes.}}"
+    )
+
+    latex.append(
+        f"\\label{{tab:{score_type.lower()}_gt_distribution}}"
+    )
+
+    latex.append("\\end{table}")
+
+    print("\n".join(latex))
+
+    return df
+
+
+def plot_cv_metrics(results, n_leaves):
+
+    strategies = list(results.keys())
+
+    mae_means = []
+    mae_stds = []
+
+    acc_means = []
+    acc_stds = []
+
+    off_means = []
+    off_stds = []
+
+    for strategy in strategies:
+
+        mae_means.append(
+            np.mean(results[strategy]["mae"])
+        )
+
+        mae_stds.append(
+            np.std(results[strategy]["mae"])
+        )
+
+        acc_means.append(
+            np.mean(results[strategy]["accuracy"])
+        )
+
+        acc_stds.append(
+            np.std(results[strategy]["accuracy"])
+        )
+
+        off_means.append(
+            np.mean(results[strategy]["off_by_one"])
+        )
+
+        off_stds.append(
+            np.std(results[strategy]["off_by_one"])
+        )
+
+    x = np.arange(len(strategies))
+
+    plt.figure(figsize=(10, 6))
+
+    plt.errorbar(
+        x,
+        mae_means,
+        yerr=mae_stds,
+        marker='o',
+        linewidth=2,
+        capsize=5,
+        label="MAE"
+    )
+
+    plt.errorbar(
+        x,
+        acc_means,
+        yerr=acc_stds,
+        marker='o',
+        linewidth=2,
+        capsize=5,
+        label="Accuracy"
+    )
+
+    plt.errorbar(
+        x,
+        off_means,
+        yerr=off_stds,
+        marker='o',
+        linewidth=2,
+        capsize=5,
+        label="Off-by-one"
+    )
+
+    plt.xticks(
+        x,
+        strategies,
+        fontsize=13
+    )
+
+    plt.yticks(fontsize=13)
+
+    plt.ylabel("Metric Value", fontsize=15)
+
+    plt.title(
+        f"Cross Validation Performance With {n_leaves} Leaves",
+        fontsize=18,
+        pad=20
+    )
+
+    plt.legend(fontsize=13)
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_best_strategy_results(
+    results,
+    strategy,
+    title="Savoyness",
+    n_classes=9
+):
+
+    preds = results[strategy]["preds"]
+    labels = results[strategy]["labels"]
+
+    #
+    # Correlation statistics
+    #
+
+    r, p = pearsonr(labels, preds)
+
+    print(f"\n{strategy}")
+    print(f"Pearson r = {r:.4f}")
+    print(f"p-value = {p:.6f}")
+
+    #
+    # Scatter
+    #
+
+    plot_prediction_scatter(
+        labels,
+        preds,
+        title=f"{title} Predictions ({strategy})"
+    )
+
+    #
+    # Confusion matrix
+    #
+
+    plot_confusion(
+        labels,
+        preds,
+        n_classes=n_classes,
+        title=f"{title} Confusion Matrix ({strategy})"
+    )
