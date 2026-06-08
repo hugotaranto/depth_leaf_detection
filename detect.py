@@ -10,12 +10,14 @@ import sys
 from plots import *
 from constants import *
 from util import *
-# from scipy.spatial import cKDTree
-# from scipy.spatial.ckdtree import cKDTree
 
+# Size to downsample image to before DBSCAN clustering
 DBSCAN_DOWNSAMPLE_SIZE = 256
+
+# Circularity threshold to filter leaf segmentations
 CIRCULARITY_THRESHOLD = 0.75
 
+# flag wether to display the plots
 DISPLAY = False
 
 def get_foreground_mask_thresh(image):
@@ -66,17 +68,11 @@ def dbscan(depth_map, image, show=False):
     resized = cv2.resize(depth_map, (DBSCAN_DOWNSAMPLE_SIZE, DBSCAN_DOWNSAMPLE_SIZE))
     resized_image = cv2.resize(image, (DBSCAN_DOWNSAMPLE_SIZE, DBSCAN_DOWNSAMPLE_SIZE))
 
-    # kmeans to separate plant from soil based on colour
-    # mask = get_foreground_mask_colour(resized_image)
+    # separate leaf from background soil
     mask = get_foreground_mask_thresh(resized_image)
 
     if show:
-        plt.subplot(1, 2, 1)
-        plt.imshow(resized_image)
-
-        plt.subplot(1, 2, 2)
-        plt.imshow(mask, cmap='gray')
-        plt.show()
+        plot_background_red(resized_image, mask)
 
     height, width = resized.shape
     yy, xx = np.mgrid[0:height, 0:width]
@@ -119,6 +115,7 @@ def dbscan(depth_map, image, show=False):
 
     if show:
         show_dbscan_clusters(resized, filtered_points[:, :2], labels, image, depth_map, centroids, orig_centroids)
+        # show_dbscan_pipeline(depth_map, image, filtered_points[:, :2], labels, centroids, DBSCAN_DOWNSAMPLE_SIZE)
 
     return centroids
 
@@ -175,10 +172,6 @@ def segment_with_sam(image, centroids, predictor):
         selected_idx = np.argmin(mask_areas)
         selected_mask = masks[selected_idx]
 
-        # choose the highest scoring mask
-        # selected_idx = np.argmax(scores)
-        # selected_mask = masks[selected_idx]
-
         # check if the segment is disconnected:
         num_labels, labels = cv2.connectedComponents(selected_mask.astype(np.uint8))
 
@@ -210,8 +203,6 @@ def segment_with_sam(image, centroids, predictor):
 
         # save the leaf mask
         leaf_masks.append(selected_mask)
-
-        # plot_sam_segmentation(image, mask=selected_mask, padding=200)
 
     return combined_mask, leaf_masks
 
@@ -455,7 +446,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         if DISPLAY:
             plot_segmentation_mask(image, segmented_mask)
 
-        scores = score_leaves(depth_pro_depth, segmented_mask, display=DISPLAY)
+        scores = score_leaves(depth_pro_depth, segmented_mask, display=False)
 
         if DISPLAY:
             visualise_top_leaves(image, leaf_segmentations, scores, n=5)
@@ -463,7 +454,6 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         if save_dir is not None:
             save_segmentation_mask(segmented_mask, scores, name, save_dir, h, w)
 
-        # segmentations.append(segmented_mask)
         segmentations[name] = segmented_mask
 
     return segmentations
@@ -496,12 +486,6 @@ def main():
         plot_dir = os.path.join(IMAGE_DIR, plot)
         segmentation_masks = detect_plot(plot_dir, sam_predictor, save_dir=DETECTION_OUTPUT)
 
-
 if __name__ == "__main__":
     main()
-    # sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
-
-    # segmentation_masks = detect_plot(IMAGE_DIR, sam_predictor, save_dir=DETECTION_OUTPUT)
-    # segmentation_masks = detect_dir("../data/left", sam_predictor, save_dir=DETECTION_OUTPUT)
-
 

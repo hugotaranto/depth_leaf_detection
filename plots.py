@@ -63,6 +63,69 @@ def plot_depth_with_clusters(depth_map, labels_2d, cluster_centroids, cmap='plas
     plt.axis('off')
     plt.show()
 
+def show_dbscan_pipeline(depth_map, image, filtered_xy, labels, centroids, downsample_size):
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # ------------------------------------------------------------------
+    # Left: depth map
+    # ------------------------------------------------------------------
+    axes[0].imshow(depth_map, cmap="plasma")
+    axes[0].axis("off")
+
+    # ------------------------------------------------------------------
+    # Right: RGB image with clusters + centroids
+    # ------------------------------------------------------------------
+    axes[1].imshow(image)
+    axes[1].axis("off")
+
+    # Scale cluster points from DBSCAN resolution back to image resolution
+    img_h, img_w = image.shape[:2]
+
+    scale_x = img_w / downsample_size
+    scale_y = img_h / downsample_size
+
+    cluster_xy = filtered_xy.astype(np.float32).copy()
+    cluster_xy[:, 0] *= scale_x
+    cluster_xy[:, 1] *= scale_y
+
+    unique_labels = np.unique(labels)
+
+    for label in unique_labels:
+
+        if label == -1:
+            continue
+        else:
+            color = plt.cm.tab10(label % 10)
+            size = 8
+            alpha = 0.7
+
+        pts = cluster_xy[labels == label]
+
+        axes[1].scatter(
+            pts[:, 0],
+            pts[:, 1],
+            s=size,
+            c=[color],
+            alpha=alpha,
+            edgecolors="none"
+        )
+
+    # Centroids (already in original image coordinates)
+    if len(centroids) > 0:
+        axes[1].scatter(
+            centroids[:, 0],
+            centroids[:, 1],
+            c="red",
+            s=80,
+            marker="x",
+            linewidths=2
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+
 
 def show_dbscan_clusters(depth_map, filtered_xy, labels, image, depth, centroids, orig_centroids):
 
@@ -1711,109 +1774,19 @@ def plot_gt_coverage(
     return df
 
 
-def plot_cv_metrics(results, n_leaves):
-
-    strategies = list(results.keys())
-
-    mae_means = []
-    mae_stds = []
-
-    acc_means = []
-    acc_stds = []
-
-    off_means = []
-    off_stds = []
-
-    for strategy in strategies:
-
-        mae_means.append(
-            np.mean(results[strategy]["mae"])
-        )
-
-        mae_stds.append(
-            np.std(results[strategy]["mae"])
-        )
-
-        acc_means.append(
-            np.mean(results[strategy]["accuracy"])
-        )
-
-        acc_stds.append(
-            np.std(results[strategy]["accuracy"])
-        )
-
-        off_means.append(
-            np.mean(results[strategy]["off_by_one"])
-        )
-
-        off_stds.append(
-            np.std(results[strategy]["off_by_one"])
-        )
-
-    x = np.arange(len(strategies))
-
-    plt.figure(figsize=(10, 6))
-
-    plt.errorbar(
-        x,
-        mae_means,
-        yerr=mae_stds,
-        marker='o',
-        linewidth=2,
-        capsize=5,
-        label="MAE"
-    )
-
-    plt.errorbar(
-        x,
-        acc_means,
-        yerr=acc_stds,
-        marker='o',
-        linewidth=2,
-        capsize=5,
-        label="Accuracy"
-    )
-
-    plt.errorbar(
-        x,
-        off_means,
-        yerr=off_stds,
-        marker='o',
-        linewidth=2,
-        capsize=5,
-        label="Off-by-one"
-    )
-
-    plt.xticks(
-        x,
-        strategies,
-        fontsize=13
-    )
-
-    plt.yticks(fontsize=13)
-
-    plt.ylabel("Metric Value", fontsize=15)
-
-    plt.title(
-        f"Cross Validation Performance With {n_leaves} Leaves",
-        fontsize=18,
-        pad=20
-    )
-
-    plt.legend(fontsize=13)
-
-    plt.tight_layout()
-    plt.show()
 
 def plot_best_strategy_results(
     results,
-    strategy,
+    fit_strategy,
+    prediction_strategy,
     title="Savoyness",
     n_classes=9
 ):
 
-    preds = results[strategy]["preds"]
-    labels = results[strategy]["labels"]
+    data = results[fit_strategy][prediction_strategy]
+
+    preds = data["preds"]
+    labels = data["labels"]
 
     #
     # Correlation statistics
@@ -1821,18 +1794,27 @@ def plot_best_strategy_results(
 
     r, p = pearsonr(labels, preds)
 
-    print(f"\n{strategy}")
+    print(f"\nFit strategy: {fit_strategy}")
+    print(f"Prediction strategy: {prediction_strategy}")
+
     print(f"Pearson r = {r:.4f}")
     print(f"p-value = {p:.6f}")
 
+    print(f"MAE = {np.mean(data['mae']):.4f}")
+    print(f"Accuracy = {np.mean(data['accuracy']):.4f}")
+    print(f"Off-by-one = {np.mean(data['off_by_one']):.4f}")
+
     #
-    # Scatter
+    # Scatter plot
     #
 
     plot_prediction_scatter(
         labels,
         preds,
-        title=f"{title} Predictions ({strategy})"
+        title=(
+            f"{title} Predictions\n"
+            f"{fit_strategy} + {prediction_strategy}"
+        )
     )
 
     #
@@ -1843,5 +1825,726 @@ def plot_best_strategy_results(
         labels,
         preds,
         n_classes=n_classes,
-        title=f"{title} Confusion Matrix ({strategy})"
+        title=(
+            f"{title} Confusion Matrix\n"
+            f"{fit_strategy} + {prediction_strategy}"
+        )
     )
+
+def plot_cv_metrics(
+    results,
+    title="Cross Validation Strategy Comparison",
+    n_leaves=None
+):
+
+    metrics = [
+        "mae",
+        "accuracy",
+        "off_by_one"
+    ]
+
+    strategy_labels = []
+
+    metric_means = {
+        m: [] for m in metrics
+    }
+
+    metric_stds = {
+        m: [] for m in metrics
+    }
+
+    #
+    # Flatten results hierarchy
+    #
+
+    for fit_name, fit_results in results.items():
+
+        for pred_method, vals in fit_results.items():
+
+            label = (
+                f"{fit_name.replace('_', ' ').title()}\n"
+                f"{pred_method}"
+            )
+
+            strategy_labels.append(label)
+
+            for metric in metrics:
+
+                metric_means[metric].append(
+                    np.mean(vals[metric])
+                )
+
+                metric_stds[metric].append(
+                    np.std(vals[metric])
+                )
+
+    #
+    # Plot
+    #
+
+    fig, axs = plt.subplots(
+        1,
+        3,
+        figsize=(22, 6)
+    )
+
+    for ax, metric in zip(axs, metrics):
+
+        ax.bar(
+            range(len(strategy_labels)),
+            metric_means[metric],
+            yerr=metric_stds[metric]
+        )
+
+        ax.set_xticks(
+            range(len(strategy_labels))
+        )
+
+        ax.set_xticklabels(
+            strategy_labels,
+            rotation=55,
+            ha='right',
+            fontsize=10
+        )
+
+        ax.set_title(
+            metric.upper(),
+            fontsize=16
+        )
+
+        ax.grid(
+            True,
+            alpha=0.3
+        )
+
+    full_title = title
+
+    if n_leaves is not None:
+        full_title += f" ({n_leaves} leaves)"
+
+    fig.suptitle(
+        full_title,
+        fontsize=18
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_fit_strategy_metrics(
+    results,
+    title="Fit Strategy Comparison",
+    n_leaves=None
+):
+
+    metrics = [
+        "mae",
+        "accuracy",
+        "off_by_one"
+    ]
+
+    fit_strategies = list(results.keys())
+
+    metric_means = {
+        m: [] for m in metrics
+    }
+
+    metric_stds = {
+        m: [] for m in metrics
+    }
+
+    #
+    # Average over prediction methods
+    #
+
+    for fit_name in fit_strategies:
+
+        fit_results = results[fit_name]
+
+        for metric in metrics:
+
+            vals = []
+
+            for pred_method in fit_results:
+
+                vals.extend(
+                    fit_results[pred_method][metric]
+                )
+
+            metric_means[metric].append(
+                np.mean(vals)
+            )
+
+            metric_stds[metric].append(
+                np.std(vals)
+            )
+
+    #
+    # Plot
+    #
+
+    x = np.arange(len(fit_strategies))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for metric in metrics:
+
+        ax.plot(
+            x,
+            metric_means[metric],
+            marker='o',
+            linewidth=2,
+            label=metric.upper()
+        )
+
+        ax.errorbar(
+            x,
+            metric_means[metric],
+            yerr=metric_stds[metric],
+            fmt='none',
+            capsize=4
+        )
+
+    labels = [
+        s.replace("_", " ").title()
+        for s in fit_strategies
+    ]
+
+    ax.set_xticks(x)
+
+    ax.set_xticklabels(
+        labels,
+        fontsize=13
+    )
+
+    ax.set_ylabel(
+        "Score",
+        fontsize=15
+    )
+
+    full_title = title
+
+    if n_leaves is not None:
+        full_title += f" ({n_leaves} leaves)"
+
+    ax.set_title(
+        full_title,
+        fontsize=18
+    )
+
+    ax.grid(True, alpha=0.3)
+
+    ax.legend(fontsize=12)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_prediction_strategy_metrics(
+    results,
+    fit_strategy,
+    title=None,
+    n_leaves=None
+):
+
+    metrics = [
+        "mae",
+        "accuracy",
+        "off_by_one"
+    ]
+
+    prediction_methods = [
+        "raw_mean",
+        "raw_median",
+        "binned_mean",
+        "binned_median"
+    ]
+
+    metric_means = {
+        m: [] for m in metrics
+    }
+
+    metric_stds = {
+        m: [] for m in metrics
+    }
+
+    #
+    # Compute means/stds
+    #
+
+    fit_results = results[fit_strategy]
+
+    for pred_method in prediction_methods:
+
+        vals = fit_results[pred_method]
+
+        for metric in metrics:
+
+            metric_means[metric].append(
+                np.mean(vals[metric])
+            )
+
+            metric_stds[metric].append(
+                np.std(vals[metric])
+            )
+
+    #
+    # Plot
+    #
+
+    x = np.arange(len(prediction_methods))
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+
+    for metric in metrics:
+
+        ax.plot(
+            x,
+            metric_means[metric],
+            marker='o',
+            linewidth=2,
+            label=metric.upper()
+        )
+
+        ax.errorbar(
+            x,
+            metric_means[metric],
+            yerr=metric_stds[metric],
+            fmt='none',
+            capsize=4
+        )
+
+    labels = [
+        s.replace("_", "\n")
+        for s in prediction_methods
+    ]
+
+    ax.set_xticks(x)
+
+    ax.set_xticklabels(
+        labels,
+        fontsize=12
+    )
+
+    ax.set_ylabel(
+        "Score",
+        fontsize=15
+    )
+
+    if title is None:
+
+        title = (
+            fit_strategy.replace("_", " ").title()
+            + " Prediction Strategy Comparison"
+        )
+
+    if n_leaves is not None:
+        title += f" ({n_leaves} leaves)"
+
+    ax.set_title(
+        title,
+        fontsize=18
+    )
+
+    ax.grid(True, alpha=0.3)
+
+    ax.legend(fontsize=12)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def print_strategy_latex_table(
+    all_results,
+    caption="Classification strategy comparison.",
+    label="tab:strategy_comparison"
+):
+
+    fit_names = {
+        "fit_medians": "Medians",
+        "fit_means": "Means",
+        "fit_all_leaves": "All Leaves"
+    }
+
+    pred_names = {
+        "raw_mean": "Raw Mean",
+        "raw_median": "Raw Median",
+        "binned_mean": "Binned Mean",
+        "binned_median": "Binned Median"
+    }
+
+    latex = []
+
+    latex.append("\\begin{table}[H]")
+    latex.append("\\centering")
+    latex.append("\\renewcommand{\\arraystretch}{1.2}")
+    latex.append("\\setlength{\\tabcolsep}{5pt}")
+    latex.append("\\fontsize{8.5}{10}\\selectfont")
+
+    latex.append("\\begin{tabular}{cllcccc}")
+    latex.append("\\hline")
+
+    latex.append(
+        " & "
+        "\\textbf{Fit} & "
+        "\\textbf{Prediction} & "
+        "\\textbf{MAE} & "
+        "\\textbf{Acc.} & "
+        "\\textbf{Off-One} & "
+        "\\textbf{$r$} \\\\"
+    )
+
+    latex.append("\\hline")
+
+    #
+    # Each scoring method
+    #
+
+    for method_name, results in all_results.items():
+
+        first_method_row = True
+
+        for fit_key in results.keys():
+
+            first_fit_row = True
+
+            for pred_key in results[fit_key].keys():
+
+                data = results[fit_key][pred_key]
+
+                mae = np.mean(data["mae"])
+                acc = np.mean(data["accuracy"]) * 100
+                off1 = np.mean(data["off_by_one"]) * 100
+
+                preds = np.asarray(data["preds"])
+                labels = np.asarray(data["labels"])
+
+                r, _ = pearsonr(labels, preds)
+
+                #
+                # Vertical method column
+                #
+
+                if first_method_row:
+
+                    row = (
+                        f"\\multirow{{12}}{{*}}{{"
+                        f"\\rotatebox[origin=c]{{90}}{{{method_name}}}"
+                        f"}}"
+                    )
+
+                    first_method_row = False
+
+                else:
+
+                    row = ""
+
+                #
+                # Fit strategy column
+                #
+
+                if first_fit_row:
+
+                    row += (
+                        f" & \\multirow{{4}}{{*}}{{{fit_names[fit_key]}}}"
+                    )
+
+                    first_fit_row = False
+
+                else:
+
+                    row += " & "
+
+                #
+                # Prediction strategy
+                #
+
+                row += (
+                    f" & {pred_names[pred_key]}"
+                    f" & {mae:.3f}"
+                    f" & {acc:.1f}"
+                    f" & {off1:.1f}"
+                    f" & {r:.3f} \\\\"
+                )
+
+                latex.append(row)
+
+            latex.append("\\cline{2-7}")
+
+        latex.append("\\hline")
+
+    latex.append("\\end{tabular}")
+
+    latex.append(f"\\caption{{{caption}}}")
+    latex.append(f"\\label{{{label}}}")
+
+    latex.append("\\end{table}")
+
+    # print("\\n".join(latex))
+    print("\n".join(latex))
+
+
+
+
+def plot_leaf_count_comparison(
+    leaf_num_results,
+    title="Leaf Count Comparison",
+    fitting_method="fit_means",
+    prediction_method="binned_mean",
+    metric="mae",
+    ylabel="Mean Absolute Error (MAE)"
+):
+
+    leaf_counts = sorted(leaf_num_results.keys())
+    methods = sorted(leaf_num_results[leaf_counts[0]].keys())
+
+    results_arrs = {}
+    for method in methods:
+        results_arrs[method] = []
+
+    for n in leaf_counts:
+
+        results = leaf_num_results[n]
+
+        for method in methods:
+            scores = results[method][fitting_method][prediction_method][metric]
+
+            mean = np.mean(scores)
+            results_arrs[method].append(mean)
+
+    #
+    # Plot
+    #
+
+    plt.figure(figsize=(7, 5))
+
+    for method in methods:
+        plt.plot(
+            leaf_counts,
+            results_arrs[method],
+            marker='o',
+            label=method.split(" ")[0]
+        )
+
+    plt.rc('axes', titlesize=20)
+    plt.rc('axes', labelsize=20)
+
+    plt.xlabel("Number of Leaves", fontsize=15)
+    plt.ylabel(ylabel, fontsize=15)
+
+    plt.title(title)
+
+    plt.grid(True, alpha=0.3)
+
+    plt.xticks(leaf_counts)
+
+    plt.legend()
+
+    plt.tight_layout()
+
+    plt.show()
+
+
+def plot_background_red(image, mask):
+
+    plt.figure(figsize=(12, 6))
+
+    # Red overlay where mask == 0
+    overlay = image.copy()
+
+    red_mask = mask == 0
+
+    # Blend red into masked regions
+    overlay[red_mask] = (
+        0.5 * overlay[red_mask] +
+        0.5 * np.array([255, 0, 0])
+    ).astype(np.uint8)
+
+    plt.axis("off")
+    plt.title("Background Mask Removed", fontsize=20)
+    plt.imshow(overlay)
+
+    plt.show()
+
+
+def plot_segs_depth_scores(
+    image,
+    segmentation_mask,
+    depth_map,
+    scores,
+):
+
+    for i in range(len(scores)):
+        scores[i] = scores[i] * 10
+
+    def get_leaf_colors(num_labels):
+
+        safe_hues = np.concatenate([
+            np.linspace(0, 70, 6),
+            np.linspace(190, 300, 6),
+        ])
+
+        hues = np.linspace(
+            0,
+            len(safe_hues) - 1,
+            num_labels
+        ) % len(safe_hues)
+
+        hues = safe_hues[hues.astype(int)]
+
+        def hsl_to_rgb(h, s=0.95, l=0.5):
+
+            c = (1 - abs(2 * l - 1)) * s
+            x = c * (1 - abs((h / 60) % 2 - 1))
+            m = l - c / 2
+
+            if h < 60:
+                r, g, b = c, x, 0
+            elif h < 120:
+                r, g, b = x, c, 0
+            elif h < 180:
+                r, g, b = 0, c, x
+            elif h < 240:
+                r, g, b = 0, x, c
+            elif h < 300:
+                r, g, b = x, 0, c
+            else:
+                r, g, b = c, 0, x
+
+            return (r + m, g + m, b + m)
+
+        colors = np.array([
+            hsl_to_rgb(h)
+            for h in hues
+        ])
+
+        np.random.seed(42)
+        np.random.shuffle(colors)
+
+        return colors
+
+    fig, axes = plt.subplots(
+        1,
+        3,
+        figsize=(20, 7)
+    )
+
+    #
+    # Generate colours once so both plots match
+    #
+
+    unique_ids = np.unique(segmentation_mask)
+    unique_ids = unique_ids[unique_ids > 0]
+
+    colors_float = get_leaf_colors(len(unique_ids))
+    colors_uint8 = (colors_float * 255).astype(np.uint8)
+
+    #
+    # =====================================================
+    # 1. RGB + segmentation overlay
+    # =====================================================
+    #
+
+    combined_mask = np.ma.masked_where(
+        segmentation_mask == 0,
+        segmentation_mask
+    )
+
+    seg_cmap = ListedColormap(colors_float)
+
+    axes[0].imshow(image)
+
+    axes[0].imshow(
+        combined_mask,
+        alpha=0.5,
+        cmap=seg_cmap,
+        vmin=1,
+        vmax=len(unique_ids)
+    )
+
+    # axes[0].set_title("Segmentation Mask")
+    axes[0].axis("off")
+
+    #
+    # =====================================================
+    # 2. Depth map
+    # =====================================================
+    #
+
+    im = axes[1].imshow(
+        depth_map,
+        cmap="plasma"
+    )
+
+    # axes[1].set_title("Depth Map")
+    axes[1].axis("off")
+
+    # fig.colorbar(
+    #     im,
+    #     ax=axes[1],
+    #     fraction=0.046,
+    #     pad=0.04
+    # )
+
+    #
+    # =====================================================
+    # 3. Leaf scores
+    # =====================================================
+    #
+
+    vis = image.copy()
+
+    for idx, seg_id in enumerate(unique_ids):
+
+        mask = (
+            segmentation_mask == seg_id
+        ).astype(np.uint8)
+
+        contours, _ = cv2.findContours(
+            mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        color_rgb = colors_uint8[idx]
+
+        color_bgr = (
+            int(color_rgb[2]),
+            int(color_rgb[1]),
+            int(color_rgb[0]),
+        )
+
+        cv2.drawContours(
+            vis,
+            contours,
+            -1,
+            color_bgr,
+            3
+        )
+
+        M = cv2.moments(mask)
+
+        if M["m00"] > 0:
+
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+
+            score = scores[idx]
+
+            cv2.putText(
+                vis,
+                f"{score:.2f}",
+                (cx - 20, cy),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                color_bgr,
+                2,
+                cv2.LINE_AA
+            )
+
+    axes[2].imshow(vis)
+    # axes[2].set_title("Leaf Scores")
+    axes[2].axis("off")
+
+    plt.tight_layout()
+    plt.show()

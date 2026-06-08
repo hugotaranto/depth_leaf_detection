@@ -15,8 +15,11 @@ import pickle
 
 from detect import score_leaves, order_mask
 
+# Flag wether to display plots
 DISPLAY = False
-NUM_LEAVES = 10
+
+# number of leaves to select from each image
+NUM_LEAVES = 5
 
 @dataclass
 class PlotEvaluation:
@@ -53,7 +56,17 @@ def cross_validate_scoring(
     keep_num=None
 ):
 
-    strategies = [
+    #
+    # 12 total strategies
+    #
+
+    fit_methods = {
+        "fit_medians": "medians",
+        "fit_means": "means",
+        "fit_all_leaves": "all"
+    }
+
+    prediction_methods = [
         "raw_mean",
         "raw_median",
         "binned_mean",
@@ -66,23 +79,26 @@ def cross_validate_scoring(
     # Initialise storage
     #
 
-    for strategy in strategies:
+    for fit_name in fit_methods:
 
-        results[strategy] = {
-            "mae": [],
-            "accuracy": [],
-            "off_by_one": [],
-            "preds": [],
-            "labels": []
-        }
+        results[fit_name] = {}
+
+        for pred_method in prediction_methods:
+
+            results[fit_name][pred_method] = {
+                "mae": [],
+                "accuracy": [],
+                "off_by_one": [],
+                "preds": [],
+                "labels": [],
+                "r": []
+            }
 
     #
     # Cross validation
     #
 
     for seed in range(n_splits):
-
-        # print(f"Split {seed + 1}/{n_splits}")
 
         train_plots, train_labels, test_plots, test_labels = split_by_plot(
             plots,
@@ -109,79 +125,87 @@ def cross_validate_scoring(
         # Fit bins
         #
 
-        bins_med = fit_bins(
-            train_eval.medians,
-            train_eval.plot_labels
-        )
+        fitted_bins = {
+            "medians": fit_bins(
+                train_eval.medians,
+                train_eval.plot_labels
+            ),
 
-        bins_mean = fit_bins(
-            train_eval.means,
-            train_eval.plot_labels
-        )
+            "means": fit_bins(
+                train_eval.means,
+                train_eval.plot_labels
+            ),
 
-        bins_all = fit_bins(
-            train_eval.scores,
-            train_eval.leaf_labels
-        )
-
-        strategy_bins = {
-            "raw_mean": bins_mean,
-            "raw_median": bins_med,
-            "binned_mean": bins_all,
-            "binned_median": bins_all
+            "all": fit_bins(
+                train_eval.scores,
+                train_eval.leaf_labels
+            )
         }
 
         #
-        # Evaluate each strategy
+        # Evaluate all combinations
         #
 
-        for strategy in strategies:
+        for fit_name, fit_source in fit_methods.items():
 
-            preds_split = predict_image_scores(
-                test_eval.scores_list,
-                strategy_bins[strategy],
-                method=strategy
-            )
+            bins = fitted_bins[fit_source]
 
-            metrics = evaluate_predictions(
-                preds_split,
-                test_eval.plot_labels
-            )
+            for pred_method in prediction_methods:
 
-            results[strategy]["mae"].append(
-                metrics["mae"]
-            )
+                preds_split = predict_image_scores(
+                    test_eval.scores_list,
+                    bins,
+                    method=pred_method
+                )
 
-            results[strategy]["accuracy"].append(
-                metrics["accuracy"]
-            )
+                metrics = evaluate_predictions(
+                    preds_split,
+                    test_eval.plot_labels
+                )
 
-            results[strategy]["off_by_one"].append(
-                metrics["off_by_one"]
-            )
+                #
+                # Store metrics
+                #
 
-            results[strategy]["preds"].extend(
-                preds_split
-            )
+                results[fit_name][pred_method]["mae"].append(
+                    metrics["mae"]
+                )
 
-            results[strategy]["labels"].extend(
-                test_eval.plot_labels
-            )
+                results[fit_name][pred_method]["accuracy"].append(
+                    metrics["accuracy"]
+                )
+
+                results[fit_name][pred_method]["off_by_one"].append(
+                    metrics["off_by_one"]
+                )
+
+                results[fit_name][pred_method]["r"].append(
+                    metrics["r"]
+                )
+
+                results[fit_name][pred_method]["preds"].extend(
+                    preds_split
+                )
+
+                results[fit_name][pred_method]["labels"].extend(
+                    test_eval.plot_labels
+                )
 
     #
     # Convert to arrays
     #
 
-    for strategy in strategies:
+    for fit_name in results:
 
-        for key in results[strategy]:
+        for pred_method in results[fit_name]:
 
-            results[strategy][key] = np.asarray(
-                results[strategy][key]
-            )
+            for key in results[fit_name][pred_method]:
+
+                results[fit_name][pred_method][key] = np.asarray(
+                    results[fit_name][pred_method][key]
+                )
 
     return results
-
 
 
 def validate_predictions(gt, pred, n=5, overlap_thresh=0.5, show=False, image=None, min_score=0.4):
@@ -309,10 +333,13 @@ def evaluate_predictions(preds, labels):
         np.abs(preds - labels) <= 1
     )
 
+    r, p = pearsonr(labels, preds)
+
     return {
         "mae": mae,
         "accuracy": accuracy,
-        "off_by_one": off_by_one
+        "off_by_one": off_by_one,
+        "r": r
     }
 
 
@@ -416,7 +443,7 @@ def fit_bins(scores, labels, n_classes=9):
 
         vals = [
             s for s, l in zip(scores, labels)
-            if l == i
+            if l == i and np.isfinite(s)
         ]
 
         if len(vals) == 0:
@@ -544,7 +571,6 @@ def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=
                 # plot_scores.extend(scores)
                 plot_scores.append(scores)
 
-        # res_scores.append(plot_scores)
         res_scores[plot] = plot_scores
 
     return res_scores
@@ -616,16 +642,19 @@ def create_evaluation(plots, plot_labels, scores_dict, keep_num=None):
 
     return eval
 
-def load_scores(plots, image_dir=IMAGE_DIR, n_leaves=5, scores_method="SAVOYNESS", display=False, gt=None):
+def load_scores(plots, image_dir=IMAGE_DIR, n_leaves=5, scores_method="SAVOYNESS", display=False, gt=None, data_dir=None):
 
     # compute the scores on the provided plots
     # load the savoyness scores from file if specified:
-    if scores_method == "SAVOYNESS":
-        file = SAVED_SAVOYNESS_SCORES
-    elif scores_method == "CUPPING":
-        file = SAVED_CUPPING_SCORES
+    if data_dir is None:
+        if scores_method == "SAVOYNESS":
+            file = SAVED_SAVOYNESS_SCORES
+        elif scores_method == "CUPPING":
+            file = SAVED_CUPPING_SCORES
+        else:
+            raise ValueError(f"scoring method: {scores_method} not supported")
     else:
-        raise ValueError(f"scoring method: {scores_method} not supported")
+        file = data_dir
 
     if file is not None:
         try:
@@ -654,40 +683,19 @@ def evaluate_scoring(plots, ground_truth, preds, test_ratio=0.7, keep_num=None):
 
 def validate_downstream_scoring(image_dir, n_leaves, database_file, display=False):
 
-    plots = np.sort(os.listdir(image_dir))
-    savoyness_gt = []
-    cupping_gt = []
+    savoyness_plots, savoyness_gt, cupping_plots, cupping_gt = get_plots_gt(
+        image_dir=image_dir,
+        database_file=database_file
+    )
 
-    savoyness_plots = []
-    cupping_plots = []
+    if display:
+        plot_gt_coverage(ground_truth=savoyness_gt,
+                num_classes=9,
+                         score_type="Savoyness")
 
-    for plot in plots:
-        # get the plot number
-        plot_number = plot[-3:]
-        try:
-            plot_number = int(plot_number)
-        except:
-            continue
-
-        # now load the eval scores for this plot
-        savoyness, cupping = load_plot_eval_scores(plot_number, database_file)
-        # print(f"Plot {plot_number} savoyness: {savoyness_gt}, cupping: {cupping_gt}")
-
-        if savoyness is not None:
-            savoyness_plots.append(plot)
-            savoyness_gt.append(savoyness)
-
-        if cupping is not None: 
-            cupping_plots.append(plot)
-            cupping_gt.append(cupping)
-
-    # plot_gt_coverage(ground_truth=savoyness_gt,
-    #                  num_classes=9,
-    #                  score_type="Savoyness")
-    #
-    # plot_gt_coverage(ground_truth=cupping_gt,
-    #                  num_classes=9,
-    #                  score_type="Cupping")
+        plot_gt_coverage(ground_truth=cupping_gt,
+                         num_classes=9,
+                         score_type="Cupping")
 
     savoyness_scores = load_scores(savoyness_plots, image_dir=image_dir, n_leaves=n_leaves,
                                    scores_method="SAVOYNESS", display=display, gt=savoyness_gt)
@@ -698,23 +706,39 @@ def validate_downstream_scoring(image_dir, n_leaves, database_file, display=Fals
     # now we want to split into train/test given the scores.
     # this is to be done evenly given the distribution of scores
 
-    # run through each of the number of leaves to keep from each image
-    leaves_to_keep = [1, 2, 3, 5, 10]
+    print(f"Evaluating Scoring for {n_leaves} leaves per image:")
 
-    for keep_num in leaves_to_keep:
-        print(f"Evaluating Scoring for {keep_num} leaves per image:")
+    results = cross_validate_scoring(savoyness_plots, savoyness_gt, savoyness_scores, n_splits=5, test_ratio=0.7)
 
-        # evaluate_scoring(savoyness_plots, savoyness_gt, savoyness_scores, keep_num=keep_num)
-        # evaluate_scoring(cupping_plots, cupping_gt, cupping_scores, keep_num=keep_num)
+    # compare the fitting strategies
+    plot_fit_strategy_metrics(
+        results,
+        n_leaves=n_leaves,
+        title=f"Fitting Strategy Comparison For {SAVOYNESS_EVAL_METHOD} Savoyness"
+    )
 
-        results = cross_validate_scoring(savoyness_plots, savoyness_gt, savoyness_scores, n_splits=5, test_ratio=0.7, keep_num=keep_num)
-        plot_cv_metrics(results, n_leaves=keep_num)
+    # compare prediction strategies within a selected fitting method
+    plot_prediction_strategy_metrics(
+        results,
+        fit_strategy="fit_means",
+        title=f"Fit Means Prediction Strategy Comparison For {SAVOYNESS_EVAL_METHOD} Savoyness"
+    )
 
-        plot_best_strategy_results(
-            results,
-            strategy="binned_mean",
-            title="Savoyness"
-        )
+    results = cross_validate_scoring(cupping_plots, cupping_gt, cupping_scores, n_splits=5, test_ratio=0.7)
+
+    # compare the fitting strategies
+    plot_fit_strategy_metrics(
+        results,
+        n_leaves=n_leaves,
+        title=f"Fitting Strategy Comparison For {CUPPING_EVAL_METHOD} Cupping"
+    )
+
+    # compare prediction strategies within a selected fitting method
+    plot_prediction_strategy_metrics(
+        results,
+        fit_strategy="fit_means",
+        title=f"Fit Means Prediction Strategy Comparison For {CUPPING_EVAL_METHOD} Cupping"
+    )
 
 
 def results_analysis_plot(train_eval:PlotEvaluation, test_eval:PlotEvaluation):
@@ -833,9 +857,6 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
     correct_requested = (correct_preds / num_leaves_requested) * 100
     iou_mean = np.mean(iou_scores_cum)
 
-    # print(f"Correctly detected {correct * 100:.2f}% of leaves\nMean IOU segmentation accuracy: {iou_mean}")
-    # print(f"From requested {correct_requested * 100:.2f}")
-
     return {
         "correct": correct,
         "correct_requested": correct_requested,
@@ -843,16 +864,162 @@ def validate_detection(image_dir, num_leaves, annotation_dir=ANNOTATION_DIR,
     }
 
 
+def get_plots_gt(image_dir, database_file):
+
+    plots = np.sort(os.listdir(image_dir))
+    savoyness_gt = []
+    cupping_gt = []
+
+    savoyness_plots = []
+    cupping_plots = []
+
+    for plot in plots:
+        # get the plot number
+        plot_number = plot[-3:]
+        try:
+            plot_number = int(plot_number)
+        except:
+            continue
+
+        # now load the eval scores for this plot
+        savoyness, cupping = load_plot_eval_scores(plot_number, database_file)
+
+        if savoyness is not None:
+            savoyness_plots.append(plot)
+            savoyness_gt.append(savoyness)
+
+        if cupping is not None: 
+            cupping_plots.append(plot)
+            cupping_gt.append(cupping)
+
+    return savoyness_plots, savoyness_gt, cupping_plots, cupping_gt
+
+
+def compare_methods(data, plots, gt, num_leaves=5, trait="", test_ratio=0.7):
+
+    results = {}
+
+    for method in data.keys():
+        data_path = data[method]
+
+        # load the data
+        scores = load_scores(plots, data_dir=data_path)
+
+        val = cross_validate_scoring(plots, gt, scores, n_splits=5, test_ratio=test_ratio, keep_num=num_leaves)
+
+
+        results[method] = val
+
+        # plot the results
+        # plot_fit_strategy_metrics(
+        #     val,
+        #     n_leaves=num_leaves,
+        #     title=f"Fitting Strategy Comparison For {method} {trait}"
+        # )
+        #
+        # # plot the prediction strategies
+        # plot_prediction_strategy_metrics(
+        #     val,
+        #     fit_strategy="fit_means",
+        #     title=f"Fit Means Prediction Strategy Comparison For {method} {trait}"
+        # )
+
+        # plot_best_strategy_results(
+        #     val,
+        #     fit_strategy="fit_medians",
+        #     prediction_strategy="raw_mean"
+        # )
+
+        # plot_best_strategy_results(
+        #     val,
+        #     fit_strategy="fit_all_leaves",
+        #     prediction_strategy="binned_mean",
+        #     title="Cupping Plane Classification Using Proposed Method 5 Leaf"
+        # )
+
+    return results
+        
+
+
 def main():
-    validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
+
+
+    # # score analysis
+    # savoyness_plots, savoyness_gt, cupping_plots, cupping_gt = get_plots_gt(
+    #     image_dir=IMAGE_DIR,
+    #     database_file=DATABASE
+    # )
+    #
+    # num_leaves_list = [1, 2, 3, 5, 8, 10]
+    #
+    # # CUPPING
+    # 
+    # proposed_cupping_data = {
+    #     # "Plane" : "./results/10_cupping_plane_proposed.pkl",
+    #     # "Quadratic" : "./results/10_cupping_quadratic_proposed.pkl"
+    #
+    #     "Plane" : "./results/10_cupping_plane_sam3.pkl",
+    #     "Quadratic" : "./results/10_cupping_quadratic_sam3.pkl"
+    # }
+    #
+    # # results = compare_methods(proposed_cupping_data, cupping_plots, cupping_gt, num_leaves=5, trait="Cupping", test_ratio=0.7)
+    #
+    # # print_strategy_latex_table(
+    # #     results,
+    # #     caption="Classification strategy comparison for \\textbf{SAMv3 Method} detected leaf cupping scoring",
+    # #     label="tab:cupping_sam3_comparison"
+    # # )
+    #
+    # proposed_cupping_data = {
+    #     "Proposed" : "./results/10_cupping_plane_proposed.pkl",
+    #     "SAMv3" : "./results/10_cupping_plane_sam3.pkl"
+    # }
+    #
+    # leaf_num_results = {}
+    # for n in num_leaves_list:
+    #     results = compare_methods(proposed_cupping_data, cupping_plots, cupping_gt, num_leaves=n, trait="Cupping")
+    #     leaf_num_results[n] = results
+    #
+    #
+    # plot_leaf_count_comparison(leaf_num_results,
+    #                            fitting_method="fit_all_leaves",
+    #                            prediction_method="binned_mean",
+    #                            metric="r",
+    #                            ylabel="Pearson's Correlation Coefficient (r)")
+
+    # SAVOYNESS 
+    
+    #
+    # proposed_savoyness_data = {
+    #     "Laplace Proposed" : "./results/10_savoyness_laplace_proposed_44.pkl",
+    #     "Laplace SAMv3" : "./results/10_savoyness_laplace_sam3.pkl",
+    # }
+    #
+    #
+    # leaf_num_results = {}
+    # for n in num_leaves_list:
+    #     results = compare_methods(proposed_savoyness_data, savoyness_plots, savoyness_gt, num_leaves=n, trait="Savoyness")
+    #     leaf_num_results[n] = results
+    #
+    # plot_leaf_count_comparison(leaf_num_results)
+
+    # print_strategy_latex_table(
+    #     results,
+    #     caption="Classification strategy comparison for proposed savoyness scoring",
+    #     label="tab:savoy_proposed_comparison"
+    # )
+
+    
+
+    # validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
 
     # validation for proposed technique
-    # results = validate_detection("../data/left", num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output=DETECTION_OUTPUT,
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
+    results = validate_detection("../data/left", num_leaves=5,
+                       annotation_dir=ANNOTATION_DIR,
+                       detection_output=DETECTION_OUTPUT,
+                       rescore=True,
+                       score_type="CUM",
+                       depth_type="DEPTH_PRO")
 
     # print("PROPOSED")
     # results = validate_detection(IMAGE_DIR, num_leaves=5,
@@ -895,7 +1062,6 @@ def main():
     #                    score_type="CUM",
     #                    depth_type="DEPTH_PRO")
     # print(results)
-
 
 
 if __name__ == "__main__":

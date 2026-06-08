@@ -1,6 +1,5 @@
 from depth_pro.depth_pro import DepthProConfig
-# Image directory
-# IMAGE_DIR = "../data/left"
+# Directory to all plots
 IMAGE_DIR = "./data/images"
 
 # manual annotation directory
@@ -10,9 +9,7 @@ ANNOTATION_DIR = "./data/annotation_out"
 SAM_PATH = "./sam_checkpoints/sam_vit_l_0b3195.pth"
 SAM_MODEL_TYPE = "vit_l"
 
-# Monocular depth estimation data
-# depth type to be used in detection
-
+# Directory of monocular depth estimations
 DEPTH_PRO_DIR = "./data/mono_depths/depth_pro"
 MARIGOLD_DIR = "./data/mono_depths/marigold"
 
@@ -27,28 +24,20 @@ DEPTH_PRO_CONFIG = DepthProConfig(
 )
 
 # leaf detection output
-# DETECTION_OUTPUT = "./data/detection_out"
-DETECTION_OUTPUT = "./data/samv3_out/merged"
+DETECTION_OUTPUT = "./data/detection_out"
 
-DOWNSTREAM_DEPTH_TYPE = "DEPTH_PRO"
+# Depth map type to use for trait analysis
+DOWNSTREAM_DEPTH_TYPE = "DEPTH_PRO"     # can be: [DEPTH_PRO, MARIGOLD]
 
-# downstream bins for scoring
-BINS_FILE = "./bins.npz"
-# DATABASE = "./data/dataset.csv"
+# Database for manual scores of each plot
 DATABASE = "./data/Trial 26.csv"
 
 SAVOYNESS_EVAL_METHOD = "LAPLACE"       # can be: DEPTH, LAPLACE, FFT
-CUPPING_EVAL_METHOD = "QUADRATIC"   # can be: QUADRATIC, PLANE
+CUPPING_EVAL_METHOD = "PLANE"           # can be: QUADRATIC, PLANE
 
-# SAVED_SAVOYNESS_SCORES = "./savoyness.pkl"
-# SAVED_SAVOYNESS_SCORES = "savoyness_fft.pkl"
-# SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_proposed.pkl"
-# SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_proposed_44.pkl"
-SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_laplace_sam3.pkl"
+# Directory to save savoyness scores to
+SAVED_SAVOYNESS_SCORES = "./results/10_savoyness_depth_proposed.pkl"
 
-# SAVED_CUPPING_SCORES = "cupping.pkl"
-# SAVED_CUPPING_SCORES = None
-# SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_proposed.pkl"
-# SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_proposed_44.pkl"
-SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_sam3.pkl"
+# Directory to save cupping scores to
+SAVED_CUPPING_SCORES = "./results/10_cupping_quadratic_proposed_44.pkl"
 

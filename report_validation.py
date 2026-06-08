@@ -339,8 +339,13 @@ def main():
     df.to_csv("./results/increased_score_val.csv", index=False)
 
 if __name__ == "__main__":
-    # main()
+    df = test_num_leaves_used()
+    df.to_csv("./results/num_leaves.csv")
 
+    plot_num_leaves_used(df, metric="correct")
+    plot_num_leaves_used(df, metric="correct_requested", title="Requested Accuracy vs Number of Leaves Used")
+    # main()
+    
     # generate_method_comparison_table("./results/increased_score_val.csv")
     # get_av_iou("./results/increased_score_val.csv")
 
@@ -349,10 +354,4 @@ if __name__ == "__main__":
     # mask_dir = "./data/rcnn_detections"
     # mask_dir = "./data/yolo_detections"
     # num_leaves_detected(mask_dir)
-
-    df = test_num_leaves_used()
-    df.to_csv("./results/num_leaves.csv")
-
-    plot_num_leaves_used(df, metric="correct")
-    plot_num_leaves_used(df, metric="correct_requested", title="Requested Accuracy vs Number of Leaves Used")
 

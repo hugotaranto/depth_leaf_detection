@@ -39,40 +39,110 @@ def load_sam(sam_path, sam_model_type):
     predictor = SamPredictor(sam)
     return predictor
 
-def interactive_hover(image, sam_predictor, combined_mask=None):
-    fig, ax = plt.subplots(figsize=(12, 8))
+
+def interactive_hover(image, sam_predictor, combined_mask=None, image_name=""):
+    fig = plt.figure(figsize=(14, 8))
+
+    #
+    # Layout
+    #
+
+    gs = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=[1, 5]
+    )
+
+    panel_ax = fig.add_subplot(gs[0, 0])
+    ax = fig.add_subplot(gs[0, 1])
+
     ax.imshow(image)
-    ax.set_title("Hover to segment")
+    ax.set_title("Interactive Leaf Segmentation", fontsize=16)
+    ax.axis("off")
+
+    panel_ax.axis("off")
 
     h, w = image.shape[:2]
 
-    # --- OVERLAYS ---
+    #
+    # Overlays
+    #
+
     combined_overlay = np.zeros((h, w, 4), dtype=np.float32)
     combined_display = ax.imshow(combined_overlay)
 
     hover_overlay = np.zeros((h, w, 4), dtype=np.float32)
     mask_display = ax.imshow(hover_overlay)
 
-    # --- MASKS ---
+    #
+    # Masks
+    #
+
     mask = np.zeros((h, w), dtype=np.uint8)
+
     if combined_mask is None:
+
         combined_mask = np.zeros((h, w), dtype=np.uint8)
         leaf_num = 1
-        previous = None
 
     else:
-        leaf_num = len(np.unique(combined_mask))
-        previous = leaf_num - 1
-        if previous == 0:
-            previous = None
 
+        leaf_num = np.max(combined_mask) + 1
 
-    # --- COLORING FUNCTION ---
+    #
+    # GUI PANEL
+    #
+
+    info_text = panel_ax.text(
+        0.02,
+        0.98,
+        "",
+        va="top",
+        fontsize=12,
+        family="monospace"
+    )
+
+    #
+    # Update side panel
+    #
+
+    def update_panel():
+
+        num_segmented = len(
+            np.unique(combined_mask)
+        ) - 1
+
+        text = (
+            f"IMAGE\n"
+            f"-----\n"
+            f"{image_name}\n\n"
+
+            f"SEGMENTED LEAVES\n"
+            f"----------------\n"
+            f"{num_segmented}\n\n"
+
+            f"CONTROLS\n"
+            f"--------\n"
+            f"Hover  : Preview mask\n"
+            f"Click  : Add mask\n"
+            f"ESC    : Undo\n"
+            f"Close  : Finish\n"
+        )
+
+        info_text.set_text(text)
+
+    #
+    # Coloring
+    #
+
     def mask_to_rgba(label_mask):
+
         rgba = np.zeros((h, w, 4), dtype=np.float32)
 
         unique_labels = np.unique(label_mask)
-        unique_labels = unique_labels[unique_labels != 0]
+        unique_labels = unique_labels[
+            unique_labels != 0
+        ]
 
         safe_hues = np.concatenate([
             np.linspace(0, 70, 6),
@@ -80,55 +150,114 @@ def interactive_hover(image, sam_predictor, combined_mask=None):
         ])
 
         def hsl_to_rgb(h, s=0.7, l=0.5):
+
             c = (1 - abs(2 * l - 1)) * s
             x = c * (1 - abs((h / 60) % 2 - 1))
             m = l - c / 2
-            if h < 60:      r, g, b = c, x, 0
-            elif h < 120:   r, g, b = x, c, 0
-            elif h < 180:   r, g, b = 0, c, x
-            elif h < 240:   r, g, b = 0, x, c
-            elif h < 300:   r, g, b = x, 0, c
-            else:            r, g, b = c, 0, x
+
+            if h < 60:
+                r, g, b = c, x, 0
+
+            elif h < 120:
+                r, g, b = x, c, 0
+
+            elif h < 180:
+                r, g, b = 0, c, x
+
+            elif h < 240:
+                r, g, b = 0, x, c
+
+            elif h < 300:
+                r, g, b = x, 0, c
+
+            else:
+                r, g, b = c, 0, x
+
             return (r + m, g + m, b + m)
 
         for label in unique_labels:
-            hue = safe_hues[(label - 1) % len(safe_hues)]
+
+            hue = safe_hues[
+                (label - 1) % len(safe_hues)
+            ]
+
             r, g, b = hsl_to_rgb(hue)
-            rgba[label_mask == label] = [r, g, b, 0.6]
+
+            rgba[label_mask == label] = [
+                r,
+                g,
+                b,
+                0.6
+            ]
 
         return rgba
 
+    #
+    # Undo
+    #
+
     def on_undo(event):
-        if event.key == "escape":
-            nonlocal leaf_num, mask, combined_mask
 
-            if leaf_num == 1:
-                return
+        nonlocal leaf_num, combined_mask
 
-            print(f"Undoing mask {leaf_num}")
+        if event.key != "escape":
+            return
 
-            leaf_num -= 1
-            combined_mask[combined_mask == leaf_num] = 0
+        if leaf_num <= 1:
+            return
 
-            combined_display.set_data(mask_to_rgba(combined_mask))
-            fig.canvas.draw_idle()
+        leaf_num -= 1
 
-    # --- CLICK EVENT ---
-    def onclick(event):
-        nonlocal leaf_num, mask, combined_mask
+        print(f"Undoing mask {leaf_num}")
 
-        print("clicked")
-        combined_mask[mask == 1] = leaf_num
-        leaf_num += 1
+        combined_mask[
+            combined_mask == leaf_num
+        ] = 0
 
-        combined_display.set_data(mask_to_rgba(combined_mask))
+        combined_display.set_data(
+            mask_to_rgba(combined_mask)
+        )
+
+        update_panel()
+
         fig.canvas.draw_idle()
 
-    # --- HOVER EVENT ---
+    #
+    # Click event
+    #
+
+    def onclick(event):
+
+        nonlocal leaf_num, mask, combined_mask
+
+        if not event.inaxes:
+            return
+
+        print("clicked")
+
+        combined_mask[mask == 1] = leaf_num
+
+        leaf_num += 1
+
+        combined_display.set_data(
+            mask_to_rgba(combined_mask)
+        )
+
+        update_panel()
+
+        fig.canvas.draw_idle()
+
+    #
+    # Hover event
+    #
+
     def on_move(event):
+
         nonlocal mask
 
-        mask_display.set_data(np.zeros((h, w, 4), dtype=np.float32))
+        mask_display.set_data(
+            np.zeros((h, w, 4), dtype=np.float32)
+        )
 
         if not event.inaxes:
             fig.canvas.draw_idle()
@@ -139,21 +268,59 @@ def interactive_hover(image, sam_predictor, combined_mask=None):
         if x < 0 or y < 0 or x >= w or y >= h:
             return
 
-        mask = segment_point(sam_predictor, [x, y])
+        mask = segment_point(
+            sam_predictor,
+            [x, y]
+        )
 
-        rgba = np.zeros((h, w, 4), dtype=np.float32)
-        rgba[mask == 1] = [1.0, 0.0, 0.0, 0.5]
+        rgba = np.zeros(
+            (h, w, 4),
+            dtype=np.float32
+        )
+
+        rgba[mask == 1] = [
+            1.0,
+            0.0,
+            0.0,
+            0.5
+        ]
 
         mask_display.set_data(rgba)
+
         fig.canvas.draw_idle()
 
-    combined_display.set_data(mask_to_rgba(combined_mask))
+    #
+    # Initial draw
+    #
+
+    combined_display.set_data(
+        mask_to_rgba(combined_mask)
+    )
+
+    update_panel()
+
     fig.canvas.draw_idle()
 
+    #
     # Bind events
-    fig.canvas.mpl_connect("motion_notify_event", on_move)
-    fig.canvas.mpl_connect("button_press_event", onclick)
-    fig.canvas.mpl_connect("key_press_event", on_undo)
+    #
+
+    fig.canvas.mpl_connect(
+        "motion_notify_event",
+        on_move
+    )
+
+    fig.canvas.mpl_connect(
+        "button_press_event",
+        onclick
+    )
+
+    fig.canvas.mpl_connect(
+        "key_press_event",
+        on_undo
+    )
+
+    plt.tight_layout()
     plt.show()
 
     return combined_mask
@@ -171,7 +338,12 @@ def main(image_dir):
         sam_predictor.set_image(image)
 
         # annotate_image(image)
-        mask = interactive_hover(image, sam_predictor)
+
+        mask = interactive_hover(
+            image,
+            sam_predictor,
+            image_name=name
+        )
 
         save_to_file(name, mask)
 
@@ -225,12 +397,17 @@ def random_sample(image_dir, sam_predictor, seed=10, input="./data/rcnn_input", 
         # annotate the image
         image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
         sam_predictor.set_image(image)
-        mask = interactive_hover(image, sam_predictor, combined_mask=combined_mask)
+
+        mask = interactive_hover(
+            image,
+            sam_predictor,
+            combined_mask=combined_mask,
+            image_name=image_name
+        )
 
         save_to_file(image_name, mask)
 
 if __name__ == "__main__":
-    # main("../data/right")
     sam_predictor = load_sam(SAM_PATH, SAM_MODEL_TYPE)
-    random_sample("./data/images", sam_predictor)
+    random_sample(IMAGE_DIR, sam_predictor)
 
