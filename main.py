@@ -61,7 +61,7 @@ def compute_depth_maps(plot_dir):
     torch.cuda.empty_cache()
 
     print(f"Computing Marigold depth maps for images in plot: {plot_dir}\n")
-    marigold_model = MarigoldDepthEstimator()
+    marigold_model = MarigoldDepthEstimator(checkpoint=MARIGOLD_CHECKPOINT)
     marigold_depths = {}
 
     for im in image_paths:
