@@ -96,34 +96,37 @@ def marigold_predict_directory(model:MarigoldDepthEstimator, directory, save_pat
     
     image_names = os.listdir(directory)
     depths = []
-    depth = None
 
     for name in image_names:
-
-        base_name = os.path.splitext(name)[0]
-        if save_path is not None:
-            os.makedirs(save_path, exist_ok=True)
-            saved = os.listdir(save_path)
-
-            if f"{base_name}.npy" in saved:
-                # load it
-                depth = load_std_depth(name, save_path)
-                depths.append(depth)
-                continue
-
-        # otherwise compute it
-        sys.stdout.write(f"Predicting image: {name}\r")
         image_path = os.path.join(directory, name)
-        depth = model.predict(image_path)
-
-        if save_path is not None:
-            out_file = os.path.join(save_path, f"{base_name}.npy")
-            np.save(out_file, depth)
+        depth = marigold_predict_image(image_path, name, model, save_path=save_path)
 
         depths.append(depth)
 
-    return np.array(depths)
+    return depths
 
+def marigold_predict_image(image_path, name, model, save_path=None):
+
+    base_name = os.path.splitext(name)[0]
+    if save_path is not None:
+        os.makedirs(save_path, exist_ok=True)
+        saved = os.listdir(save_path)
+
+        if f"{base_name}.npy" in saved:
+            # load it
+            depth = load_std_depth(name, save_path)
+            return depth
+
+    # otherwise compute it
+    sys.stdout.write(f"Predicting image: {name}\r")
+    depth = model.predict(image_path)
+    depth = depth.astype(np.float32)
+
+    if save_path is not None:
+        out_file = os.path.join(save_path, f"{base_name}.npy")
+        np.save(out_file, depth)
+
+    return depth
 
 def load_depth_pro(config=None):
 
@@ -138,6 +141,39 @@ def load_depth_pro(config=None):
 
     return model, transform
 
+def depth_pro_predict_image(image_path, name, model, transform, save_path=None):
+
+    base_name = os.path.splitext(name)[0]
+    if save_path is not None:
+        os.makedirs(save_path, exist_ok=True)
+        saved = os.listdir(save_path)
+
+        # check if the depth has already been calculated
+        if f"{base_name}.npy" in saved:
+            # load it
+            depth = load_std_depth(name, save_path)
+            return depth
+
+    # otherwise compute it
+    sys.stdout.write(f"Predicting image: {name}\r")
+    image, _, f_px = dp.load_rgb(image_path)
+    image_t = transform(image)
+
+    torch.cuda.reset_peak_memory_stats()
+    prediction = model.infer(image_t, f_px=f_px)
+    depth_tensor = prediction["depth"]
+
+    depth = depth_tensor.detach().cpu().numpy().squeeze().astype(np.float32)
+
+    torch.cuda.empty_cache()
+    if save_path is not None:
+        # save the depth map to the save directory as a .npy
+        os.makedirs(save_path, exist_ok=True)
+        out_file = os.path.join(save_path, f"{base_name}.npy")
+        np.save(out_file, depth)
+
+    return depth
+
 def depth_pro_predict(directory, model, transform, save_path=None):
 
     image_names = os.listdir(directory)
@@ -146,39 +182,10 @@ def depth_pro_predict(directory, model, transform, save_path=None):
 
     for name in image_names:
 
-        base_name = os.path.splitext(name)[0]
-        if save_path is not None:
-            os.makedirs(save_path, exist_ok=True)
-            saved = os.listdir(save_path)
-
-            # check if the depth has already been calculated
-            if f"{base_name}.npy" in saved:
-                # load it
-                depth = load_std_depth(name, save_path)
-                depths.append(depth)
-                continue
-
-        # otherwise compute it
-        sys.stdout.write(f"Predicting image: {name}\r")
-        # image = load_image(name, directory)
         image_path = os.path.join(directory, name)
-        image, _, f_px = dp.load_rgb(image_path)
 
-        image_t = transform(image)
-
-        torch.cuda.reset_peak_memory_stats()
-        prediction = model.infer(image_t, f_px=f_px)
-        depth_tensor = prediction["depth"]
-
-        depth = depth_tensor.detach().cpu().numpy().squeeze()
-
-        torch.cuda.empty_cache()
-
-        if save_path is not None:
-            # save the depth map to the save directory as a .npy
-            os.makedirs(save_path, exist_ok=True)
-            out_file = os.path.join(save_path, f"{base_name}.npy")
-            np.save(out_file, depth)
+        depth = depth_pro_predict_image(image_path, name, model, 
+                                        transform, save_path=save_path)
 
         depths.append(depth)
 

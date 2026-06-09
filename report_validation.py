@@ -4,6 +4,8 @@ import pandas as pd
 from validate import *
 from plots import *
 
+# This file contains methods used for producing plots and results seen in the report.
+
 def validate_scoring():
 
     insets = [0, 1, 2, 4]
@@ -344,14 +346,7 @@ if __name__ == "__main__":
 
     plot_num_leaves_used(df, metric="correct")
     plot_num_leaves_used(df, metric="correct_requested", title="Requested Accuracy vs Number of Leaves Used")
+
     # main()
     
-    # generate_method_comparison_table("./results/increased_score_val.csv")
-    # get_av_iou("./results/increased_score_val.csv")
-
-    # mask_dir = "./data/detection_out"
-    # mask_dir = "./data/samv3_out/merged"
-    # mask_dir = "./data/rcnn_detections"
-    # mask_dir = "./data/yolo_detections"
-    # num_leaves_detected(mask_dir)
 

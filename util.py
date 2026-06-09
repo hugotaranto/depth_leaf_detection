@@ -54,24 +54,6 @@ def load_depth(name, depth_dir, depth_type):
 
     return depth
 
-# def load_eval_scores(name, database):
-#     # open the database
-#     
-#     with open(database, "r", newline="") as f:
-#         reader = csv.DictReader(f)
-#
-#         for row in reader:
-#             if row["image_path"] == name:
-#                 savoyness = row["savoyness"]
-#                 cupping = row["cupping"]
-#
-#                 savoyness = int(savoyness) if savoyness != "" else None
-#                 cupping = int(cupping) if cupping != "" else None
-#
-#                 return savoyness, cupping
-#
-#     return None, None
-
 def is_numeric(string):
     return string.lstrip("-+").isdigit()
 

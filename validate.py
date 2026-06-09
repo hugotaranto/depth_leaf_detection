@@ -494,6 +494,78 @@ def fit_bins(scores, labels, n_classes=9):
 
     return np.array(bins)
 
+def compute_plot_scores(plot_dir, n_leaves=5, attribute="SAVOYNESS",
+                        display=False, marigold_depths=None, depth_pro_depths=None, leaf_segs=None):
+
+    plot_scores = []
+    cams = os.listdir(plot_dir)
+
+    for cam in cams:
+        cam_dir = os.path.join(plot_dir, cam)
+        images = os.listdir(cam_dir)
+
+        for im_name in images:
+
+            sys.stdout.write(f"Working on image: {im_name}\r")
+
+            # load and check for 0 leaf detections
+            if leaf_segs is not None:
+                try:
+                    detections = leaf_segs[im_name]
+                except KeyError:
+                    continue
+            else:
+                detections = load_image(im_name, DETECTION_OUTPUT)
+
+            if detections is None:
+                continue
+
+            if len(np.unique(detections)) < 2:
+                continue
+
+            image = load_image(im_name, cam_dir)
+
+            # load the depth map
+            if DOWNSTREAM_DEPTH_TYPE == "MARIGOLD":
+                if marigold_depths is not None:
+                    depth = marigold_depths[im_name]
+                else:
+                    depth = load_std_depth(im_name, MARIGOLD_DIR)
+            else:
+                if depth_pro_depths is not None:
+                    depth = depth_pro_depths[im_name]
+                else:
+                    depth = load_std_depth(im_name, DEPTH_PRO_DIR)
+
+            if attribute == "SAVOYNESS":
+                # get the savoyness scores for the image
+                if SAVOYNESS_EVAL_METHOD == "LAPLACE":
+                    # use laplace method
+                    scores = savoyness(detections, image, n=n_leaves, display=display)
+                elif SAVOYNESS_EVAL_METHOD == "DEPTH":
+                    # use depth method
+                    scores = savoyness_depth(detections, depth, n=n_leaves, display=display, image=image)
+                elif SAVOYNESS_EVAL_METHOD == "FFT":
+                    # use fft method
+                    scores = savoyness_fft(detections, image, n=n_leaves, display=display)
+                else:
+                    raise ValueError(f"Unsupported Savoyness Method: {SAVOYNESS_EVAL_METHOD}") 
+
+            elif attribute == "CUPPING":
+                # get the cupping scores for the image
+                scores = leaf_cupping_mono(detections, depth, eval=CUPPING_EVAL_METHOD, n=n_leaves,
+                                               image = image, display=display)
+            else:
+                raise ValueError(f"Unsupported Leaf Trait: {attribute}")
+
+            if scores is None:
+                continue
+
+            # plot_scores.extend(scores)
+            plot_scores.append(scores)
+
+    return plot_scores
+
 def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=False, gt=None):
 
     res_scores = {}
@@ -520,56 +592,7 @@ def compute_scores(plots, image_dir, n_leaves=5, attribute="SAVOYNESS", display=
 
         # get the cams
         plot_dir = os.path.join(image_dir, plot)
-        cams = os.listdir(plot_dir)
-
-        plot_scores = []
-
-        for cam in cams:
-            cam_dir = os.path.join(plot_dir, cam)
-            images = os.listdir(cam_dir)
-
-            for im_name in images:
-
-                sys.stdout.write(f"Working on image: {im_name}\r")
-
-                # load and check for 0 leaf detections
-                detections = load_image(im_name, DETECTION_OUTPUT)
-                if len(np.unique(detections)) < 2:
-                    continue
-
-                image = load_image(im_name, cam_dir)
-
-                if DOWNSTREAM_DEPTH_TYPE == "MARIGOLD":
-                    depth = load_std_depth(im_name, MARIGOLD_DIR)
-                else:
-                    depth = load_std_depth(im_name, DEPTH_PRO_DIR)
-
-                if attribute == "SAVOYNESS":
-                    # get the savoyness scores for the image
-                    if SAVOYNESS_EVAL_METHOD == "LAPLACE":
-                        # use laplace method
-                        scores = savoyness(detections, image, n=n_leaves, display=display)
-                    elif SAVOYNESS_EVAL_METHOD == "DEPTH":
-                        # use depth method
-                        scores = savoyness_depth(detections, depth, n=n_leaves, display=display, image=image)
-                    elif SAVOYNESS_EVAL_METHOD == "FFT":
-                        # use fft method
-                        scores = savoyness_fft(detections, image, n=n_leaves, display=display)
-                    else:
-                        raise ValueError(f"Unsupported Savoyness Method: {SAVOYNESS_EVAL_METHOD}") 
-
-                elif attribute == "CUPPING":
-                    # get the cupping scores for the image
-                    scores = leaf_cupping_mono(detections, depth, eval=CUPPING_EVAL_METHOD, n=n_leaves,
-                                                   image = image, display=display)
-                else:
-                    raise ValueError(f"Unsupported Leaf Trait: {attribute}")
-
-                if scores is None:
-                    continue
-
-                # plot_scores.extend(scores)
-                plot_scores.append(scores)
+        plot_scores = compute_plot_scores(plot_dir, n_leaves=n_leaves, attribute=attribute, display=display)
 
         res_scores[plot] = plot_scores
 
@@ -894,175 +917,13 @@ def get_plots_gt(image_dir, database_file):
 
     return savoyness_plots, savoyness_gt, cupping_plots, cupping_gt
 
-
-def compare_methods(data, plots, gt, num_leaves=5, trait="", test_ratio=0.7):
-
-    results = {}
-
-    for method in data.keys():
-        data_path = data[method]
-
-        # load the data
-        scores = load_scores(plots, data_dir=data_path)
-
-        val = cross_validate_scoring(plots, gt, scores, n_splits=5, test_ratio=test_ratio, keep_num=num_leaves)
-
-
-        results[method] = val
-
-        # plot the results
-        # plot_fit_strategy_metrics(
-        #     val,
-        #     n_leaves=num_leaves,
-        #     title=f"Fitting Strategy Comparison For {method} {trait}"
-        # )
-        #
-        # # plot the prediction strategies
-        # plot_prediction_strategy_metrics(
-        #     val,
-        #     fit_strategy="fit_means",
-        #     title=f"Fit Means Prediction Strategy Comparison For {method} {trait}"
-        # )
-
-        # plot_best_strategy_results(
-        #     val,
-        #     fit_strategy="fit_medians",
-        #     prediction_strategy="raw_mean"
-        # )
-
-        # plot_best_strategy_results(
-        #     val,
-        #     fit_strategy="fit_all_leaves",
-        #     prediction_strategy="binned_mean",
-        #     title="Cupping Plane Classification Using Proposed Method 5 Leaf"
-        # )
-
-    return results
-        
-
-
 def main():
 
+    # validate the leaf detections to the manually created dataset
+    validate_detection(IMAGE_DIR, NUM_LEAVES, ANNOTATION_DIR, DETECTION_OUTPUT)
 
-    # # score analysis
-    # savoyness_plots, savoyness_gt, cupping_plots, cupping_gt = get_plots_gt(
-    #     image_dir=IMAGE_DIR,
-    #     database_file=DATABASE
-    # )
-    #
-    # num_leaves_list = [1, 2, 3, 5, 8, 10]
-    #
-    # # CUPPING
-    # 
-    # proposed_cupping_data = {
-    #     # "Plane" : "./results/10_cupping_plane_proposed.pkl",
-    #     # "Quadratic" : "./results/10_cupping_quadratic_proposed.pkl"
-    #
-    #     "Plane" : "./results/10_cupping_plane_sam3.pkl",
-    #     "Quadratic" : "./results/10_cupping_quadratic_sam3.pkl"
-    # }
-    #
-    # # results = compare_methods(proposed_cupping_data, cupping_plots, cupping_gt, num_leaves=5, trait="Cupping", test_ratio=0.7)
-    #
-    # # print_strategy_latex_table(
-    # #     results,
-    # #     caption="Classification strategy comparison for \\textbf{SAMv3 Method} detected leaf cupping scoring",
-    # #     label="tab:cupping_sam3_comparison"
-    # # )
-    #
-    # proposed_cupping_data = {
-    #     "Proposed" : "./results/10_cupping_plane_proposed.pkl",
-    #     "SAMv3" : "./results/10_cupping_plane_sam3.pkl"
-    # }
-    #
-    # leaf_num_results = {}
-    # for n in num_leaves_list:
-    #     results = compare_methods(proposed_cupping_data, cupping_plots, cupping_gt, num_leaves=n, trait="Cupping")
-    #     leaf_num_results[n] = results
-    #
-    #
-    # plot_leaf_count_comparison(leaf_num_results,
-    #                            fitting_method="fit_all_leaves",
-    #                            prediction_method="binned_mean",
-    #                            metric="r",
-    #                            ylabel="Pearson's Correlation Coefficient (r)")
-
-    # SAVOYNESS 
-    
-    #
-    # proposed_savoyness_data = {
-    #     "Laplace Proposed" : "./results/10_savoyness_laplace_proposed_44.pkl",
-    #     "Laplace SAMv3" : "./results/10_savoyness_laplace_sam3.pkl",
-    # }
-    #
-    #
-    # leaf_num_results = {}
-    # for n in num_leaves_list:
-    #     results = compare_methods(proposed_savoyness_data, savoyness_plots, savoyness_gt, num_leaves=n, trait="Savoyness")
-    #     leaf_num_results[n] = results
-    #
-    # plot_leaf_count_comparison(leaf_num_results)
-
-    # print_strategy_latex_table(
-    #     results,
-    #     caption="Classification strategy comparison for proposed savoyness scoring",
-    #     label="tab:savoy_proposed_comparison"
-    # )
-
-    
-
-    # validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
-
-    # validation for proposed technique
-    results = validate_detection("../data/left", num_leaves=5,
-                       annotation_dir=ANNOTATION_DIR,
-                       detection_output=DETECTION_OUTPUT,
-                       rescore=True,
-                       score_type="CUM",
-                       depth_type="DEPTH_PRO")
-
-    # print("PROPOSED")
-    # results = validate_detection(IMAGE_DIR, num_leaves=5,
-    #                              annotation_dir=ANNOTATION_DIR,
-    #                              detection_output=DETECTION_OUTPUT,
-    #                              rescore=True,
-    #                              inset=0,
-    #                              border_distance=0,
-    #                              score_type="CUM",
-    #                              depth_type="DEPTH_PRO")
-    #
-    # print(results)
-    #
-    #
-    # print("SAMV3")
-    # results = validate_detection(IMAGE_DIR, num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output="./data/samv3_out/merged",
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
-    #
-    # print(results)
-
-    #
-    # print("RCNN")
-    # results = validate_detection(IMAGE_DIR, num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output="./data/rcnn_detections",
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
-    # print(results)
-    #
-    # print("YOLO")
-    # results = validate_detection(IMAGE_DIR, num_leaves=5,
-    #                    annotation_dir=ANNOTATION_DIR,
-    #                    detection_output="./data/yolo_detections",
-    #                    rescore=True,
-    #                    score_type="CUM",
-    #                    depth_type="DEPTH_PRO")
-    # print(results)
-
+    # perform trait analysis and classify plots
+    validate_downstream_scoring(IMAGE_DIR, NUM_LEAVES, DATABASE, display=DISPLAY)
 
 if __name__ == "__main__":
     main()

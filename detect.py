@@ -417,7 +417,7 @@ def filter_small_leaves(segmented_mask, leaf_segmentations, keep_fraction=0.5, m
 
     return new_mask, filtered
 
-def detect_dir(dir, sam_predictor, save_dir=None):
+def detect_dir(dir, sam_predictor, save_dir=None, marigold_depths=None, depth_pro_depths=None):
 
     segmentations = {}
 
@@ -428,8 +428,16 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         image = load_image(name, dir)
         sys.stdout.write(f"Detecting leaves in image: {name}\r")
 
-        marigold_depth = load_std_depth(name, MARIGOLD_DIR)
-        depth_pro_depth = load_std_depth(name, DEPTH_PRO_DIR)
+        # load the depth maps
+        if marigold_depths is not None:
+            marigold_depth = marigold_depths[name]
+        else:
+            marigold_depth = load_std_depth(name, MARIGOLD_DIR)
+
+        if depth_pro_depths is not None:
+            depth_pro_depth = depth_pro_depths[name]
+        else:
+            depth_pro_depth = load_std_depth(name, DEPTH_PRO_DIR)
 
         w, h = image.shape[:2]
 
@@ -438,6 +446,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
         if len(centroids) == 0:
             if save_dir is not None:
                 save_segmentation_mask(None, None, name, save_dir, h, w)
+            segmentations[name] = None
             continue
 
         segmented_mask, leaf_segmentations = segment_with_sam(image, centroids, sam_predictor)
@@ -458,7 +467,7 @@ def detect_dir(dir, sam_predictor, save_dir=None):
 
     return segmentations
 
-def detect_plot(plot_dir, sam_predictor, save_dir=None):
+def detect_plot(plot_dir, sam_predictor, save_dir=None, marigold_depths=None, depth_pro_depths=None):
 
     cams = os.listdir(plot_dir)
 
@@ -466,7 +475,8 @@ def detect_plot(plot_dir, sam_predictor, save_dir=None):
 
     for cam in cams:
         cam_path = os.path.join(plot_dir, cam)
-        cam_masks = detect_dir(cam_path, sam_predictor, save_dir=save_dir)
+        cam_masks = detect_dir(cam_path, sam_predictor, save_dir=save_dir,
+                               marigold_depths=marigold_depths, depth_pro_depths=depth_pro_depths)
 
         segmentations = segmentations | cam_masks
 
