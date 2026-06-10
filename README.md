@@ -39,7 +39,7 @@ Repository:
 
 https://github.com/apple/ml-depth-pro
 
-Follow the installation instructions provided in the repository.
+Checkpoint should be automatically downloaded for the first time at runtime
 
 ---
 
@@ -96,6 +96,7 @@ python main.py
 ├── annotate.py             # Manual annotation of leaf segments
 ├── util.py                 # General utility functions
 ├── report_validation.py    # Generation of results for report
+├── compute_depths.py       # Functions to programatically call monocular depth estimators
 └── plots.py                # All matplot functions for displaying figures
 ```
 
